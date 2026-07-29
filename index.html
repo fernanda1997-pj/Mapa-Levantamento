@@ -171,8 +171,9 @@
           <p class="dica">Use a barra de ferramentas no canto do mapa para desenhar
             <b>pontos</b>, <b>rotas</b> e <b>áreas</b>. Rotas mostram a extensão em km.
             Para editar ou apagar, use os botões de edição da mesma barra.<br>
-            <b>🛣️ Rota pela estrada:</b> marque 2 ou mais pontos e o trajeto é traçado
-            automaticamente seguindo as rodovias.</p>
+            <b>🛣️ Rota pela estrada:</b> clique em 2 pontos — no mapa ou em pedreiras
+            e outros pontos fixos — e o trajeto aparece na hora seguindo as rodovias;
+            continue clicando para estender e depois <b>Concluir</b>.</p>
         </div>
       </details>
 
@@ -414,7 +415,10 @@ function popupFixoArquivo(p){
     ${p.descricao ? `<div class="pop-info">${esc(p.descricao)}</div>` : ""}
     <div class="pop-info" style="font-family:monospace">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}<br>
       UTM ${u.zona}S · E ${u.e.toFixed(0)} · N ${u.n.toFixed(0)}</div>
-    <div class="pop-info" style="color:#94A3B8">Camada do arquivo ${esc(p.arquivo || "")}</div>`;
+    <div class="pop-info" style="color:#94A3B8">Camada do arquivo ${esc(p.arquivo || "")}</div>
+    <div class="pop-acoes">
+      <button onclick="rotaDesdeAqui(${p.lat}, ${p.lng})">🛣️ Rota daqui</button>
+    </div>`;
 }
 
 function renderizarFixosArquivo(){
@@ -424,10 +428,12 @@ function renderizarFixosArquivo(){
   fixosArquivo.forEach(p => (porCategoria[p.categoria] ??= []).push(p));
   Object.entries(porCategoria).forEach(([cat, pontos]) => {
     const c = CATEGORIAS[cat] || CATEGORIAS.outro;
-    const grupo = L.layerGroup(pontos.map(p =>
-      L.marker([p.lat, p.lng], {icon:iconeFixo(cat)})
-        .bindTooltip(p.nome).bindPopup(() => popupFixoArquivo(p))
-    )).addTo(map);
+    const grupo = L.layerGroup(pontos.map(p => {
+      const m = L.marker([p.lat, p.lng], {icon:iconeFixo(cat)})
+        .bindTooltip(p.nome).bindPopup(() => popupFixoArquivo(p));
+      integrarMarcadorRota(m);
+      return m;
+    })).addTo(map);
 
     const det = document.createElement("details");
     det.innerHTML = `
@@ -491,6 +497,7 @@ function popupFixo(p){
     <div class="pop-info" style="font-family:monospace">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}<br>
       UTM ${u.zona}S · E ${u.e.toFixed(0)} · N ${u.n.toFixed(0)}</div>
     <div class="pop-acoes">
+      <button onclick="rotaDesdeAqui(${p.lat}, ${p.lng})">🛣️ Rota daqui</button>
       <button onclick="abrirModalPonto('${p.id}')">✏️ Editar</button>
       <button onclick="excluirPontoFixo('${p.id}')">🗑️ Excluir</button>
     </div>`;
@@ -513,6 +520,7 @@ function renderizarFixos(){
       p.lat = ll.lat; p.lng = ll.lng;
       salvar(CHAVE_FIXOS, pontosFixos);
     });
+    integrarMarcadorRota(m);
     marcadoresFixos[p.id] = m;
 
     const linha = document.createElement("div");
@@ -904,89 +912,157 @@ document.getElementById("arquivo-importar").addEventListener("change", ev => {
   leitor.readAsText(arq);
 });
 
-/* ================= Rota pela estrada (OSRM / OpenStreetMap) ================= */
+/* ================= Rota pela estrada (OSRM / OpenStreetMap) =================
+   Estilo Google Earth: clicou em 2 pontos, a rota aparece na hora e recalcula
+   a cada ponto extra. Pontos fixos (pedreiras etc.) servem de ponto da rota. */
 let rotaPontos = [];
 let rotaMarcadores = [];
 let rotaBanner = null;
 let rotaAtiva = false;
+let rotaPreview = null;
+let rotaGeom = null;
+let rotaMedida = "";
+let rotaCalculando = false;
+let rotaAbort = null;
+let rotaErro = false;
 
-function bannerRotaHtml(calculando){
-  if (calculando) return `<b>⏳ Calculando rota pela estrada...</b>`;
-  return `<b>🛣️ Rota pela estrada</b><br>
-    Clique nos pontos do trajeto, em ordem (${rotaPontos.length} marcado${rotaPontos.length === 1 ? "" : "s"})<br>
-    <div style="display:flex; gap:6px; margin-top:6px">
-      <button id="rota-tracar" style="flex:1; padding:5px; border:none; border-radius:5px; background:#fff; color:#1E3A72; font-weight:600; cursor:pointer">Traçar rota</button>
-      <button id="rota-cancelar" style="flex:1; padding:5px; border:1px solid #fff; border-radius:5px; background:transparent; color:#fff; cursor:pointer">Cancelar</button>
+function bannerRotaHtml(){
+  const n = rotaPontos.length;
+  let status;
+  if (rotaCalculando) status = "⏳ Calculando pela estrada...";
+  else if (rotaErro) status = "⚠️ Sem rota entre esses pontos — clique mais perto de uma estrada ou desfaça o último ponto.";
+  else if (rotaGeom) status = `<b style="font-size:14px">${rotaMedida}</b> pela estrada · clique para estender`;
+  else if (n === 0) status = "Clique no <b>ponto de partida</b> — no mapa ou num ponto fixo (ex.: pedreira).";
+  else status = "Agora clique no <b>destino</b>.";
+  const btn = (id, rotulo, cheio) =>
+    `<button id="${id}" style="flex:1; padding:5px 7px; border-radius:5px; cursor:pointer; white-space:nowrap; ${
+      cheio ? "border:none; background:#fff; color:#1E3A72; font-weight:700"
+            : "border:1px solid #fff; background:transparent; color:#fff"}">${rotulo}</button>`;
+  return `<b>🛣️ Rota pela estrada</b><br>${status}
+    <div style="display:flex; gap:5px; margin-top:6px">
+      ${rotaGeom && !rotaCalculando ? btn("rota-concluir", "✔ Concluir", true) : ""}
+      ${n > 0 ? btn("rota-desfazer", "↩ Desfazer") : ""}
+      ${btn("rota-cancelar", "✖ Cancelar")}
     </div>`;
 }
-function atualizarBannerRota(calculando){
+function atualizarBannerRota(){
   if (!rotaBanner) return;
-  rotaBanner.getContainer().innerHTML = bannerRotaHtml(calculando);
-  if (!calculando){
-    const bt = document.getElementById("rota-tracar");
-    L.DomEvent.on(bt, "click", ev => { L.DomEvent.stop(ev); tracarRotaEstrada(); });
-    const bc = document.getElementById("rota-cancelar");
-    L.DomEvent.on(bc, "click", ev => { L.DomEvent.stop(ev); encerrarRotaEstrada(); });
-  }
+  rotaBanner.getContainer().innerHTML = bannerRotaHtml();
+  const ligar = (id, fn) => {
+    const b = document.getElementById(id);
+    if (b) L.DomEvent.on(b, "click", ev => { L.DomEvent.stop(ev); fn(); });
+  };
+  ligar("rota-concluir", concluirRotaEstrada);
+  ligar("rota-desfazer", desfazerPontoRota);
+  ligar("rota-cancelar", encerrarRotaEstrada);
 }
 function iniciarRotaEstrada(){
   if (rotaAtiva) return;
   rotaAtiva = true;
   rotaPontos = []; rotaMarcadores = [];
+  rotaGeom = null; rotaMedida = ""; rotaErro = false;
   document.getElementById("painel").classList.remove("aberto");
+  map.closePopup();
   map.getContainer().style.cursor = "crosshair";
   rotaBanner = L.control({position:"topright"});
   rotaBanner.onAdd = () => {
     const d = L.DomUtil.create("div");
-    d.style.cssText = "background:#1E3A72;color:#fff;padding:9px 12px;border-radius:8px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.4);max-width:230px;line-height:1.4";
+    d.style.cssText = "background:#1E3A72;color:#fff;padding:9px 12px;border-radius:8px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.4);max-width:240px;line-height:1.45";
     L.DomEvent.disableClickPropagation(d);
     return d;
   };
   rotaBanner.addTo(map);
-  atualizarBannerRota(false);
+  atualizarBannerRota();
   map.on("click", cliqueRotaEstrada);
 }
-function cliqueRotaEstrada(ev){
-  rotaPontos.push(ev.latlng);
-  const m = L.marker(ev.latlng, {icon: L.divIcon({
+function cliqueRotaEstrada(ev){ adicionarPontoRota(ev.latlng); }
+
+function adicionarPontoRota(latlng){
+  if (!rotaAtiva) return;
+  rotaPontos.push(latlng);
+  const m = L.marker(latlng, {icon: L.divIcon({
     className:"",
     html:`<div style="width:22px;height:22px;border-radius:50%;background:#1E3A72;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${rotaPontos.length}</div>`,
     iconSize:[22,22], iconAnchor:[11,11],
-  })}).addTo(map);
+  }), interactive:false}).addTo(map);
   rotaMarcadores.push(m);
-  atualizarBannerRota(false);
+  if (rotaPontos.length >= 2) recalcularRotaEstrada();
+  else atualizarBannerRota();
+}
+function desfazerPontoRota(){
+  if (!rotaPontos.length) return;
+  rotaPontos.pop();
+  map.removeLayer(rotaMarcadores.pop());
+  rotaErro = false;
+  if (rotaPontos.length >= 2) recalcularRotaEstrada();
+  else {
+    if (rotaPreview){ map.removeLayer(rotaPreview); rotaPreview = null; }
+    rotaGeom = null; rotaMedida = "";
+    atualizarBannerRota();
+  }
+}
+async function recalcularRotaEstrada(){
+  if (rotaAbort) rotaAbort.abort();
+  rotaAbort = new AbortController();
+  rotaCalculando = true; rotaErro = false;
+  atualizarBannerRota();
+  const coords = rotaPontos.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(";");
+  try {
+    const resp = await fetch(
+      `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false`,
+      {signal: rotaAbort.signal});
+    const j = await resp.json();
+    if (j.code !== "Ok" || !j.routes || !j.routes.length) throw new Error(j.message || "sem rota");
+    rotaGeom = j.routes[0].geometry;
+    rotaMedida = fmtDist(j.routes[0].distance);
+    const latlngs = rotaGeom.coordinates.map(c => [c[1], c[0]]);
+    if (rotaPreview) rotaPreview.setLatLngs(latlngs);
+    else rotaPreview = L.polyline(latlngs, {color:"#DC2626", weight:5, opacity:.85, interactive:false}).addTo(map);
+    rotaCalculando = false;
+    atualizarBannerRota();
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    rotaCalculando = false; rotaErro = true;
+    atualizarBannerRota();
+  }
+}
+function concluirRotaEstrada(){
+  if (!rotaGeom) return;
+  const linha = L.geoJSON(rotaGeom).getLayers()[0];
+  const medida = rotaMedida;
+  encerrarRotaEstrada();
+  const sugestao = "Rota " + (Object.keys(camadasDesenho).length + 1);
+  registrarDesenho(linha, sugestao);
+  salvarDesenhos();
+  dialogoNome(`Nome (Rota pela estrada · ${medida})`, sugestao, nome => {
+    if (nome) linha._nomeRTA = nome;
+    salvarDesenhos();
+  });
 }
 function encerrarRotaEstrada(){
   rotaAtiva = false;
   map.off("click", cliqueRotaEstrada);
   map.getContainer().style.cursor = "";
+  if (rotaAbort) rotaAbort.abort();
   rotaMarcadores.forEach(m => map.removeLayer(m));
   rotaMarcadores = []; rotaPontos = [];
+  if (rotaPreview){ map.removeLayer(rotaPreview); rotaPreview = null; }
+  rotaGeom = null; rotaMedida = ""; rotaCalculando = false; rotaErro = false;
   if (rotaBanner){ map.removeControl(rotaBanner); rotaBanner = null; }
 }
-async function tracarRotaEstrada(){
-  if (rotaPontos.length < 2){ aviso("Marque pelo menos 2 pontos no mapa."); return; }
-  atualizarBannerRota(true);
-  const coords = rotaPontos.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(";");
-  try {
-    const resp = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false`);
-    const j = await resp.json();
-    if (j.code !== "Ok" || !j.routes || !j.routes.length) throw new Error(j.message || "sem rota");
-    const linha = L.geoJSON(j.routes[0].geometry).getLayers()[0];
-    encerrarRotaEstrada();
-    const {medida} = infoGeom(linha);
-    const sugestao = "Rota " + (Object.keys(camadasDesenho).length + 1);
-    registrarDesenho(linha, sugestao);
-    salvarDesenhos();
-    map.fitBounds(linha.getBounds(), {padding:[40,40]});
-    dialogoNome(`Nome (Rota pela estrada · ${medida})`, sugestao, nome => {
-      if (nome) linha._nomeRTA = nome;
-      salvarDesenhos();
-    });
-  } catch (e) {
-    atualizarBannerRota(false);
-    aviso("Não foi possível calcular a rota (verifique a internet ou aproxime os pontos das estradas). Os pontos foram mantidos — tente de novo.");
-  }
+/* chamado pelos popups dos pontos fixos */
+function rotaDesdeAqui(lat, lng){
+  map.closePopup();
+  if (!rotaAtiva) iniciarRotaEstrada();
+  adicionarPontoRota(L.latLng(lat, lng));
+}
+/* faz o marcador participar da rota: em modo rota, o clique vira ponto do trajeto */
+function integrarMarcadorRota(m){
+  m.off("click");
+  m.on("click", () => {
+    if (rotaAtiva) adicionarPontoRota(m.getLatLng());
+    else m.openPopup();
+  });
 }
 const BotaoRotaEstrada = L.Control.extend({
   options:{position:"topleft"},
