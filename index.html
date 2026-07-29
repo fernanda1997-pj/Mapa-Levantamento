@@ -1418,13 +1418,11 @@ function montarPrancha(mapCv, titulo, subtitulo, logo, coordsProntas){
   }
   return cv;
 }
-/* distância pela estrada (OSRM table) do ponto de referência até cada ponto */
-async function calcularKmsPrancha(coords){
-  const refVal = document.getElementById("pr-ref").value;
-  if (!refVal || !coords.length) return coords;
-  const [rlat, rlng] = refVal.split(",").map(Number);
+/* distância pela estrada (OSRM table) de um ponto de referência até cada ponto */
+async function calcularKmsDesde(refLat, refLng, coords){
+  if (!coords.length) return coords;
   try {
-    const str = [`${rlng.toFixed(6)},${rlat.toFixed(6)}`,
+    const str = [`${refLng.toFixed(6)},${refLat.toFixed(6)}`,
                  ...coords.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`)].join(";");
     const resp = await Promise.race([
       fetch(`https://router.project-osrm.org/table/v1/driving/${str}?sources=0&annotations=distance`),
@@ -1439,10 +1437,80 @@ async function calcularKmsPrancha(coords){
         p.km = (m / 1000).toLocaleString("pt-BR", {maximumFractionDigits:2});
     });
   } catch (e) {
-    aviso("Não deu para calcular os KM pela estrada (" + (e.message || e) + ") — a prancha sai sem eles.");
+    aviso("Não deu para calcular os KM pela estrada (" + (e.message || e) + ").");
   }
   return coords;
 }
+async function calcularKmsPrancha(coords){
+  const refVal = document.getElementById("pr-ref").value;
+  if (!refVal) return coords;
+  const [rlat, rlng] = refVal.split(",").map(Number);
+  return calcularKmsDesde(rlat, rlng, coords);
+}
+function linhaCoordenada(p){
+  return `${p.nome} (${p.lat.toFixed(6)}°, ${p.lng.toFixed(6)}°)${p.km ? ` - KM ${p.km}` : ""}`;
+}
+
+/* ---- painel COORDENADAS ao vivo, sobre o mapa ---- */
+let painelCoords = null;
+let textoCoordsAtual = "";
+async function atualizarPainelCoords(){
+  const corpo = painelCoords?.getContainer()?.querySelector(".cx-corpo");
+  if (!corpo) return;
+  corpo.textContent = "Calculando pela estrada...";
+  let coords = listaCoordenadasPrancha();
+  const ref = coords.find(p => p.categoria === "canteiro" || /CANTEIRO/i.test(p.nome));
+  if (ref) coords = await calcularKmsDesde(ref.lat, ref.lng, coords);
+  if (!coords.length){
+    corpo.textContent = "(nenhum ponto na área visível)";
+    textoCoordsAtual = "";
+    return;
+  }
+  corpo.innerHTML = coords.map(p => `<div style="padding:2px 0; border-bottom:1px solid #eef2f7">${esc(linhaCoordenada(p))}</div>`).join("");
+  textoCoordsAtual = "COORDENADAS:\n" + coords.map(linhaCoordenada).join("\n");
+}
+function alternarPainelCoords(){
+  if (painelCoords){ map.removeControl(painelCoords); painelCoords = null; return; }
+  painelCoords = L.control({position:"bottomleft"});
+  painelCoords.onAdd = () => {
+    const d = L.DomUtil.create("div");
+    d.style.cssText = "background:rgba(255,255,255,.96); border:1.5px solid #0f172a; border-radius:8px; padding:10px 12px; font-size:12px; max-width:340px; max-height:45vh; overflow-y:auto; box-shadow:0 2px 10px rgba(0,0,0,.3); line-height:1.5";
+    d.innerHTML = `
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px">
+        <b style="font-size:13px; color:#0f172a">COORDENADAS:</b>
+        <span style="flex:1"></span>
+        <button class="cx-copiar" title="Copiar texto" style="border:1px solid #cbd5e1; background:#fff; border-radius:5px; cursor:pointer; font-size:12px; padding:2px 8px">📋 Copiar</button>
+        <button class="cx-atualizar" title="Recalcular para a vista atual" style="border:1px solid #cbd5e1; background:#fff; border-radius:5px; cursor:pointer; font-size:12px; padding:2px 8px">↻</button>
+        <button class="cx-fechar" title="Fechar" style="border:none; background:none; cursor:pointer; font-size:14px">✖</button>
+      </div>
+      <div class="cx-corpo" style="color:#1e293b"></div>`;
+    L.DomEvent.disableClickPropagation(d);
+    L.DomEvent.disableScrollPropagation(d);
+    d.querySelector(".cx-fechar").addEventListener("click", alternarPainelCoords);
+    d.querySelector(".cx-atualizar").addEventListener("click", atualizarPainelCoords);
+    d.querySelector(".cx-copiar").addEventListener("click", () => {
+      if (!textoCoordsAtual){ aviso("Nada para copiar."); return; }
+      navigator.clipboard.writeText(textoCoordsAtual)
+        .then(() => aviso("Coordenadas copiadas! É só colar no relatório."))
+        .catch(() => aviso("Não consegui copiar automaticamente."));
+    });
+    return d;
+  };
+  painelCoords.addTo(map);
+  atualizarPainelCoords();
+}
+const BotaoCoords = L.Control.extend({
+  options:{position:"topleft"},
+  onAdd(){
+    const d = L.DomUtil.create("div", "leaflet-bar");
+    const a = L.DomUtil.create("a", "", d);
+    a.href = "#"; a.title = "Coordenadas dos pontos visíveis (com KM pela estrada)"; a.textContent = "🧾";
+    a.style.fontSize = "15px";
+    L.DomEvent.on(a, "click", ev => { L.DomEvent.stop(ev); alternarPainelCoords(); });
+    return d;
+  },
+});
+map.addControl(new BotaoCoords());
 async function gerarPrancha(){
   const bt = document.getElementById("pr-gerar");
   bt.disabled = true; bt.textContent = "Gerando...";
