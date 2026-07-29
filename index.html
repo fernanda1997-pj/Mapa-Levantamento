@@ -180,11 +180,15 @@
       <details class="secao">
         <summary>💾 Exportar / Importar</summary>
         <div class="corpo">
-          <button class="btn" onclick="exportarGeoJSON()">⬇️ Exportar GeoJSON</button>
+          <button class="btn" onclick="abrirModalPrancha()">🖼️ Gerar prancha (mapa de localização)</button>
+          <div style="height:8px"></div>
+          <button class="btn secundario" onclick="exportarGeoJSON()">⬇️ Exportar GeoJSON</button>
           <div class="grupo-btn">
             <button class="btn secundario" onclick="exportarKML()">⬇️ KML (Google Earth)</button>
             <button class="btn secundario" onclick="document.getElementById('arquivo-importar').click()">⬆️ Importar</button>
           </div>
+          <p class="dica">A prancha sai como imagem PNG da vista atual do mapa, com título,
+            legenda automática, seta norte e escala.</p>
           <input type="file" id="arquivo-importar" accept=".geojson,.json" style="display:none">
           <p class="dica">Exporta pontos fixos + levantamento. O GeoJSON pode ser aberto no ArcGIS/QGIS
             e reimportado aqui em outro computador.</p>
@@ -198,6 +202,23 @@
   <button id="abrir-painel" onclick="document.getElementById('painel').classList.toggle('aberto')">☰</button>
   <div id="map"></div>
   <div id="coords"></div>
+</div>
+
+<!-- Modal prancha -->
+<div class="modal-fundo" id="modal-prancha">
+  <div class="modal">
+    <h2>Gerar prancha — mapa de localização</h2>
+    <label>Título</label>
+    <input type="text" id="pr-titulo" maxlength="80" value="MAPA DE LOCALIZAÇÃO">
+    <label>Subtítulo (rodovia / trecho)</label>
+    <input type="text" id="pr-sub" maxlength="80" placeholder="Ex.: TO - 280">
+    <p class="dica" style="margin-top:10px">Dica: ative o fundo <b>Satélite</b> e enquadre a área
+      desejada no mapa antes de gerar. A legenda entra sozinha com os pontos e rotas visíveis.</p>
+    <div class="acoes">
+      <button class="btn secundario" onclick="document.getElementById('modal-prancha').classList.remove('aberto')">Cancelar</button>
+      <button class="btn" id="pr-gerar" onclick="gerarPrancha()">Gerar PNG</button>
+    </div>
+  </div>
 </div>
 
 <!-- Modal nome / confirmação -->
@@ -421,6 +442,7 @@ function popupFixoArquivo(p){
     </div>`;
 }
 
+const gruposFixosArquivo = {}; // categoria -> layerGroup (p/ legenda da prancha)
 function renderizarFixosArquivo(){
   const raiz = document.getElementById("lista-fixos-arquivo");
   raiz.innerHTML = "";
@@ -434,6 +456,7 @@ function renderizarFixosArquivo(){
       integrarMarcadorRota(m);
       return m;
     })).addTo(map);
+    gruposFixosArquivo[cat] = grupo;
 
     const det = document.createElement("details");
     det.innerHTML = `
@@ -659,6 +682,8 @@ map.pm.setGlobalOptions({
 
 const grupoDesenhos = L.layerGroup().addTo(map);
 const camadasDesenho = {}; // id -> layer
+/* cada desenho ganha uma cor própria (aparece igual na legenda da prancha) */
+const CORES_DESENHO = ["#DC2626", "#2563EB", "#F97316", "#059669", "#7C3AED", "#0EA5E9", "#CA8A04", "#DB2777"];
 
 function infoGeom(layer){
   if (layer instanceof L.Marker) return {tipo:"Ponto", medida:""};
@@ -688,15 +713,19 @@ function registrarDesenho(layer, nome){
   const id = layer._idRTA || novoId();
   layer._idRTA = id;
   layer._nomeRTA = nome;
+  if (!layer._corRTA){
+    const usados = Object.keys(camadasDesenho).filter(k => k !== id).length;
+    layer._corRTA = CORES_DESENHO[usados % CORES_DESENHO.length];
+  }
   camadasDesenho[id] = layer;
   layer.addTo(grupoDesenhos);
   if (layer.setStyle && !(layer instanceof L.Marker)){
-    layer.setStyle({color:"#DC2626", weight:4});
+    layer.setStyle({color:layer._corRTA, weight:4});
   }
   if (layer instanceof L.Marker){
     layer.setIcon(L.divIcon({
       className:"",
-      html:`<div style="width:16px;height:16px;border-radius:50%;background:#DC2626;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)"></div>`,
+      html:`<div style="width:16px;height:16px;border-radius:50%;background:${layer._corRTA};border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)"></div>`,
       iconSize:[16,16], iconAnchor:[8,8],
     }));
   }
@@ -712,7 +741,7 @@ function salvarDesenhos(){
   const fc = {type:"FeatureCollection", features:[]};
   Object.values(camadasDesenho).forEach(l => {
     const f = l.toGeoJSON();
-    f.properties = {id:l._idRTA, nome:l._nomeRTA || "", origem:"levantamento"};
+    f.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "", origem:"levantamento"};
     fc.features.push(f);
   });
   salvar(CHAVE_DESENHOS, fc);
@@ -784,6 +813,7 @@ function carregarDesenhos(){
     L.geoJSON(f, {
       onEachFeature: (feat, layer) => {
         layer._idRTA = feat.properties?.id || novoId();
+        if (feat.properties?.cor) layer._corRTA = feat.properties.cor;
         registrarDesenho(layer, feat.properties?.nome || "");
       },
     });
@@ -1076,6 +1106,176 @@ const BotaoRotaEstrada = L.Control.extend({
   },
 });
 map.addControl(new BotaoRotaEstrada());
+
+/* ================= Prancha (mapa de localização) ================= */
+function carregarScriptExt(src, glob){
+  return new Promise((res, rej) => {
+    if (window[glob]) return res();
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = res;
+    s.onerror = () => rej(new Error("Falha ao carregar " + src));
+    document.head.appendChild(s);
+  });
+}
+function abrirModalPrancha(){
+  document.getElementById("painel").classList.remove("aberto");
+  document.getElementById("modal-prancha").classList.add("aberto");
+}
+function itensLegendaPrancha(){
+  const itens = [], vb = map.getBounds();
+  pontosFixos.forEach(p => {
+    if (!vb.contains([p.lat, p.lng])) return;
+    const c = CATEGORIAS[p.categoria] || CATEGORIAS.outro;
+    itens.push({tipo:"ponto", cor:c.cor, rot:p.nome});
+  });
+  const porCat = {};
+  fixosArquivo.forEach(p => (porCat[p.categoria] ??= []).push(p));
+  Object.entries(porCat).forEach(([cat, pts]) => {
+    const grupo = gruposFixosArquivo[cat];
+    if (!grupo || !map.hasLayer(grupo)) return;
+    const n = pts.filter(p => vb.contains([p.lat, p.lng])).length;
+    if (!n) return;
+    const c = CATEGORIAS[cat] || CATEGORIAS.outro;
+    itens.push({tipo:"ponto", cor:c.cor, rot:`${c.plural} (${n})`});
+  });
+  Object.values(camadasDesenho).forEach(l => {
+    const cor = l._corRTA || "#DC2626";
+    const nome = l._nomeRTA || "(sem nome)";
+    if (l instanceof L.Marker){
+      if (vb.contains(l.getLatLng())) itens.push({tipo:"ponto", cor, rot:nome});
+    } else if (l.getBounds && vb.intersects(l.getBounds())){
+      const {medida} = infoGeom(l);
+      itens.push({tipo:"linha", cor, rot:nome + (medida ? ` · ${medida}` : "")});
+    }
+  });
+  return itens;
+}
+function montarPrancha(mapCv, titulo, subtitulo, logo){
+  const W = mapCv.width, H = mapCv.height;
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const g = cv.getContext("2d");
+  g.drawImage(mapCv, 0, 0);
+  const caixa = (x, y, w, h) => {
+    g.fillStyle = "rgba(255,255,255,0.94)"; g.fillRect(x, y, w, h);
+    g.strokeStyle = "#0f172a"; g.lineWidth = 1.5; g.strokeRect(x + .5, y + .5, w, h);
+  };
+  const texto = (t, x, y, fonte, cor, alin) => {
+    g.font = fonte; g.fillStyle = cor; g.textAlign = alin || "left"; g.fillText(t, x, y); g.textAlign = "left";
+  };
+  /* --- título (sup-esq) --- */
+  g.font = "bold 24px Segoe UI, Arial";
+  const tw = g.measureText(titulo).width;
+  g.font = "15px Segoe UI, Arial";
+  const sw = subtitulo ? g.measureText(subtitulo).width : 0;
+  const logoW = logo ? Math.round(46 * (logo.width / logo.height)) : 0;
+  const tbW = Math.max(tw, sw) + 36 + (logo ? logoW + 16 : 0);
+  const tbH = subtitulo ? 78 : 58;
+  caixa(14, 14, tbW, tbH);
+  let tx = 30;
+  if (logo){ g.drawImage(logo, 28, 14 + (tbH - 46) / 2, logoW, 46); tx = 28 + logoW + 16; }
+  texto(titulo, tx, 46, "bold 24px Segoe UI, Arial", "#0f172a");
+  if (subtitulo) texto(subtitulo, tx, 68, "15px Segoe UI, Arial", "#334155");
+  /* --- legenda (sup-dir) --- */
+  const itens = itensLegendaPrancha().slice(0, 14);
+  const rowH = 24, legFS = 13;
+  g.font = legFS + "px Segoe UI, Arial";
+  let maxW = g.measureText("Legenda").width;
+  itens.forEach(it => maxW = Math.max(maxW, g.measureText(it.rot).width));
+  const lw = Math.min(maxW + 72, Math.round(W * .4));
+  const lh = 40 + Math.max(itens.length, 1) * rowH + 6;
+  const lx = W - lw - 14, ly = 14;
+  caixa(lx, ly, lw, lh);
+  texto("Legenda", lx + 14, ly + 24, "bold 15px Segoe UI, Arial", "#0f172a");
+  g.strokeStyle = "#cbd5e1"; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(lx + 12, ly + 32); g.lineTo(lx + lw - 12, ly + 32); g.stroke();
+  if (!itens.length) texto("(nada visível na área)", lx + 14, ly + 52, "12px Segoe UI, Arial", "#94a3b8");
+  itens.forEach((it, i) => {
+    const sx = lx + 16, sy = ly + 44 + i * rowH + rowH * .4;
+    g.strokeStyle = it.cor; g.fillStyle = it.cor;
+    if (it.tipo === "linha"){
+      g.lineWidth = 5; g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx + 28, sy); g.stroke();
+    } else {
+      g.beginPath(); g.arc(sx + 14, sy, 6.5, 0, 7); g.fill();
+      g.strokeStyle = "#fff"; g.lineWidth = 1.6; g.stroke();
+    }
+    texto(it.rot, sx + 40, sy + legFS * .35, legFS + "px Segoe UI, Arial", "#1e293b");
+  });
+  /* --- escala + norte (inf-dir) --- */
+  const mpp = 40075016.686 * Math.abs(Math.cos(map.getCenter().lat * Math.PI / 180)) / (256 * Math.pow(2, map.getZoom()));
+  const passoNice = v => {
+    const e = Math.pow(10, Math.floor(Math.log10(v)));
+    const f = v / e;
+    return (f >= 5 ? 5 : f >= 2 ? 2 : 1) * e;
+  };
+  const barM = passoNice(mpp * W * .18), barPx = barM / mpp, segs = 4, sg = barPx / segs;
+  const bw = barPx + 44, bx = W - bw - 74, by = H - 56;
+  caixa(bx, by, bw, 42);
+  const b0 = bx + 22, b1 = by + 25;
+  for (let s = 0; s < segs; s++){
+    g.fillStyle = s % 2 === 0 ? "#0f172a" : "#fff";
+    g.fillRect(b0 + s * sg, b1, sg, 8);
+    g.strokeStyle = "#0f172a"; g.lineWidth = 1; g.strokeRect(b0 + s * sg + .5, b1 + .5, sg, 8);
+  }
+  g.font = "10px Segoe UI, Arial"; g.fillStyle = "#0f172a"; g.textAlign = "center";
+  for (let t = 0; t <= segs; t++){
+    const v = (barM / segs) * t;
+    g.fillText(String(barM >= 1000 ? Math.round(v / 100) / 10 : Math.round(v)), b0 + t * sg, b1 - 5);
+  }
+  g.textAlign = "left";
+  texto(barM >= 1000 ? "km" : "m", b0 + barPx + 7, b1 + 8, "bold 10px Segoe UI, Arial", "#0f172a");
+  /* norte */
+  const nx = W - 40, ny = H - 36;
+  caixa(nx - 20, ny - 42, 40, 56);
+  g.fillStyle = "#0f172a";
+  g.beginPath(); g.moveTo(nx, ny - 34); g.lineTo(nx - 8, ny - 12); g.lineTo(nx, ny - 18); g.lineTo(nx + 8, ny - 12); g.closePath(); g.fill();
+  texto("N", nx, ny + 6, "bold 15px Segoe UI, Arial", "#0f172a", "center");
+  /* --- rodapé (inf-esq) --- */
+  const denom = Math.round(mpp / (0.0254 / 96));
+  const fontes = {osm:"OpenStreetMap", sat:"Esri World Imagery", escuro:"CARTO"};
+  const baseAtiva = document.querySelector('#bases input:checked')?.value || "osm";
+  const d = new Date();
+  const dstr = `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`;
+  const rod = `Escala aprox. 1:${denom.toLocaleString("pt-BR")} · SIRGAS 2000 / WGS 84 · Fonte: ${fontes[baseAtiva]} · ${dstr} · RTA Engenheiros Consultores`;
+  g.font = "11px Segoe UI, Arial";
+  const rw = g.measureText(rod).width + 24;
+  caixa(14, H - 40, rw, 26);
+  texto(rod, 26, H - 22, "11px Segoe UI, Arial", "#334155");
+  return cv;
+}
+async function gerarPrancha(){
+  const bt = document.getElementById("pr-gerar");
+  bt.disabled = true; bt.textContent = "Gerando...";
+  try {
+    await carregarScriptExt("https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js", "htmlToImage");
+    const logo = await new Promise(res => {
+      const im = new Image();
+      im.onload = () => res(im); im.onerror = () => res(null);
+      im.src = "logo/LOGO RTA.png";
+    });
+    document.getElementById("modal-prancha").classList.remove("aberto");
+    await new Promise(r => setTimeout(r, 120)); // deixa o modal sumir da tela
+    const mapCv = await Promise.race([
+      htmlToImage.toCanvas(map.getContainer(), {
+        skipFonts:true, backgroundColor:"#ffffff", pixelRatio:1,
+        filter: n => !(n.classList && n.classList.contains("leaflet-control-container")),
+      }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("a captura demorou demais — tente de novo")), 45000)),
+    ]);
+    const titulo = document.getElementById("pr-titulo").value.trim() || "MAPA DE LOCALIZAÇÃO";
+    const sub = document.getElementById("pr-sub").value.trim();
+    const page = montarPrancha(mapCv, titulo, sub, logo);
+    const nomeArq = (sub || titulo).replace(/[^\w\- À-ÿ]+/g, "").trim().replace(/\s+/g, "_") || "prancha";
+    const a = document.createElement("a");
+    a.download = nomeArq + ".png";
+    a.href = page.toDataURL("image/png");
+    a.click();
+  } catch (e) {
+    aviso("Não foi possível gerar a prancha: " + (e.message || e));
+  }
+  bt.disabled = false; bt.textContent = "Gerar PNG";
+}
 
 /* ================= GPS ================= */
 const BotaoGPS = L.Control.extend({
