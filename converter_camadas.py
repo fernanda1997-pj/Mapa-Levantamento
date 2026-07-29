@@ -43,44 +43,47 @@ b = todas.total_bounds
 print("Bounds (WGS84):", json.dumps([round(v, 5) for v in b.tolist()]))
 
 # ---------------------------------------------------------------------------
-# Pontos fixos: qualquer .kmz/.kml na pasta base ou em "pontos fixos/".
-# A categoria é deduzida do nome do arquivo (PEDREIRAS.kmz -> pedreira).
+# Pontos fixos e rotas: qualquer .kmz/.kml em qualquer subpasta (menos dados/).
+# - LineString -> rota fixa (nome = pasta do KML, ex.: "LOTE 11")
+# - Point -> ponto fixo; categoria pelo NOME do placemark (PEDREIRA, AREIAL,
+#   CANTEIRO, CIMENTO/CAL...) ou, se não der, pelo nome do arquivo.
+#   Pontos sem categoria (ex.: instruções "Siga em direção a...") são ignorados.
+# - Pontos a menos de 250 m de outro da mesma categoria são descartados.
 # ---------------------------------------------------------------------------
+import math
+
 NS = {"k": "http://www.opengis.net/kml/2.2"}
-CATEGORIA_POR_ARQUIVO = [
-    ("PEDREIRA", "pedreira"), ("CIMENTO", "cimento"), ("CANTEIRO", "canteiro"),
-    ("JAZIDA", "jazida"), ("USINA", "usina"), ("APOIO", "apoio"),
+# regex com fronteira de palavra: "CAL" isolada é cimento/cal, mas não pega
+# PHISICAL/NATICAL; "PEDR" cobre PEDREIRA e abreviações como "PEDR."
+CATEGORIAS_CHAVE = [
+    (r"\bPEDR", "pedreira"), (r"\bCIMENTO", "cimento"), (r"\bCAL\b", "cimento"),
+    (r"\bCANTEIRO", "canteiro"), (r"\bJAZIDA", "jazida"), (r"\bUSINA", "usina"),
+    (r"\bAPOIO\b", "apoio"), (r"\bAREI?AL\b", "areial"),
 ]
 
 def sem_acento(txt):
     return unicodedata.normalize("NFKD", txt).encode("ascii", "ignore").decode()
 
-def categoria_do_arquivo(nome):
-    chave = sem_acento(nome).upper()
-    for trecho, cat in CATEGORIA_POR_ARQUIVO:
-        if trecho in chave:
+def categoria_de(texto):
+    chave = sem_acento(texto).upper()
+    for padrao, cat in CATEGORIAS_CHAVE:
+        if re.search(padrao, chave):
             return cat
-    return "outro"
+    return None
 
-def ler_kml(texto, categoria, arquivo):
-    pontos = []
-    root = ET.fromstring(texto)
-    for pm in root.findall(".//k:Placemark", NS):
-        coords = pm.find(".//k:Point/k:coordinates", NS)
-        if coords is None or not (coords.text or "").strip():
-            continue
-        lng, lat = [float(v) for v in coords.text.strip().split(",")[:2]]
-        pontos.append({
-            "nome": (pm.findtext("k:name", "", NS) or "Sem nome").strip(),
-            "categoria": categoria,
-            "descricao": (pm.findtext("k:description", "", NS) or "").strip(),
-            "lat": round(lat, 6), "lng": round(lng, 6),
-            "arquivo": arquivo,
-        })
-    return pontos
+def dist_m(a, b):
+    r = 6371000.0
+    la1, lo1, la2, lo2 = map(math.radians, [a["lat"], a["lng"], b["lat"], b["lng"]])
+    h = (math.sin((la2 - la1) / 2) ** 2
+         + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2)
+    return 2 * r * math.asin(math.sqrt(h))
 
-fixos = []
-origens = sorted(set(BASE.glob("*.km[lz]")) | set((BASE / "pontos fixos").glob("*.km[lz]")))
+fixos, rotas = [], []
+descartados = 0
+# arquivos de categoria (PEDREIRAS.kmz etc.) primeiro: têm os nomes melhores,
+# então em caso de duplicata é o ponto genérico do lote que sai
+origens = sorted((p for p in BASE.rglob("*.km[lz]") if "dados" not in p.parts),
+                 key=lambda p: (categoria_de(p.stem) is None, str(p).lower()))
 for arq in origens:
     if arq.suffix.lower() == ".kmz":
         with zipfile.ZipFile(arq) as z:
@@ -88,12 +91,58 @@ for arq in origens:
             texto = z.read(kml_interno).decode("utf-8")
     else:
         texto = arq.read_text(encoding="utf-8")
-    cat = categoria_do_arquivo(arq.stem)
-    novos = ler_kml(texto, cat, arq.name)
-    fixos.extend(novos)
-    print(f"{arq.name}: {len(novos)} ponto(s) fixo(s) [{cat}]")
+    root = ET.fromstring(texto)
+    pasta_kml = (root.findtext(".//k:Folder/k:name", "", NS) or "").strip()
+    rotulo = pasta_kml or arq.stem
+    cat_arquivo = categoria_de(arq.stem)
+    n_pts = n_rotas = 0
+    for pm in root.findall(".//k:Placemark", NS):
+        nome_pm = (pm.findtext("k:name", "", NS) or "Sem nome").strip()
+        ponto = pm.find(".//k:Point/k:coordinates", NS)
+        linha = pm.find(".//k:LineString/k:coordinates", NS)
+        if linha is not None and (linha.text or "").strip():
+            latlngs = []
+            for par in linha.text.strip().split():
+                lng, lat = [float(v) for v in par.split(",")[:2]]
+                latlngs.append([round(lat, 6), round(lng, 6)])
+            if len(latlngs) >= 2:
+                nome_rota = rotulo if n_rotas == 0 else f"{rotulo} ({n_rotas + 1})"
+                rotas.append({"nome": nome_rota, "latlngs": latlngs, "arquivo": arq.name})
+                n_rotas += 1
+        elif ponto is not None and (ponto.text or "").strip():
+            cat_nome = categoria_de(nome_pm)
+            cat = cat_nome or cat_arquivo
+            if cat is None:
+                descartados += 1
+                continue
+            lng, lat = [float(v) for v in ponto.text.strip().split(",")[:2]]
+            nome = f"{nome_pm} ({rotulo})" if (cat_nome and not cat_arquivo) else nome_pm
+            fixos.append({
+                "nome": nome, "categoria": cat,
+                "descricao": (pm.findtext("k:description", "", NS) or "").strip(),
+                "lat": round(lat, 6), "lng": round(lng, 6),
+                "arquivo": arq.name,
+            })
+            n_pts += 1
+    print(f"{arq.name}: {n_pts} ponto(s), {n_rotas} rota(s)")
+
+# remove duplicatas ENTRE arquivos (mesma categoria a menos de 250 m);
+# dentro de um mesmo arquivo tudo é preservado
+unicos = []
+for p in fixos:
+    dup = next((u for u in unicos if u["categoria"] == p["categoria"]
+                and u["arquivo"] != p["arquivo"] and dist_m(u, p) < 250), None)
+    if dup:
+        print(f"  duplicado descartado: {p['nome']} ({p['arquivo']}) ~ {dup['nome']}")
+    else:
+        unicos.append(p)
+fixos = unicos
 
 (DADOS / "pontos_fixos.js").write_text(
     "const DADOS_PONTOS_FIXOS = " + json.dumps(fixos, ensure_ascii=False) + ";\n",
     encoding="utf-8")
-print(f"Gerado {DADOS / 'pontos_fixos.js'} com {len(fixos)} ponto(s)")
+(DADOS / "rotas.js").write_text(
+    "const DADOS_ROTAS = " + json.dumps(rotas, ensure_ascii=False) + ";\n",
+    encoding="utf-8")
+print(f"Gerado pontos_fixos.js ({len(fixos)} pontos, {descartados} sem categoria ignorados)")
+print(f"Gerado rotas.js ({len(rotas)} rotas)")

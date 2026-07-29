@@ -164,6 +164,15 @@
         </div>
       </details>
 
+      <details class="secao" open id="secao-rotas-arquivo">
+        <summary>🛤️ Rotas dos lotes</summary>
+        <div class="corpo">
+          <div id="lista-rotas-arquivo"></div>
+          <p class="dica">Rotas vindas dos KMZ da pasta (ex.: LOTE 11). Marque as que
+            devem aparecer no mapa e na prancha.</p>
+        </div>
+      </details>
+
       <details class="secao" open>
         <summary>✏️ Levantamento (pontos e rotas)</summary>
         <div class="corpo">
@@ -279,6 +288,7 @@
 <script src="https://unpkg.com/proj4@2.11.0/dist/proj4.js"></script>
 <script src="dados/regioes.js"></script>
 <script src="dados/pontos_fixos.js"></script>
+<script src="dados/rotas.js"></script>
 <script>
 "use strict";
 /* ================= Configuração ================= */
@@ -288,6 +298,7 @@ const CATEGORIAS = {
   cimento:  {label:"Cimento",           cor:"#64748B", icone:"🏭", plural:"Cimento"},
   canteiro: {label:"Canteiro de obras", cor:"#DC2626", icone:"🏗️", plural:"Canteiros de obras"},
   jazida:   {label:"Jazida",            cor:"#B45309", icone:"⛏️", plural:"Jazidas"},
+  areial:   {label:"Areial",            cor:"#D97706", icone:"🏖️", plural:"Areais"},
   usina:    {label:"Usina de asfalto",  cor:"#1F2937", icone:"🛢️", plural:"Usinas de asfalto"},
   apoio:    {label:"Ponto de apoio",    cor:"#059669", icone:"🏠", plural:"Pontos de apoio"},
   outro:    {label:"Outro",             cor:"#7C3AED", icone:"📍", plural:"Outros"},
@@ -543,6 +554,47 @@ function renderizarFixosArquivo(){
     atualizarCabecalho();
     det.appendChild(corpo);
     raiz.appendChild(det);
+  });
+}
+
+/* ================= Rotas de arquivo (dados/rotas.js) ================= */
+const rotasArquivo = (typeof DADOS_ROTAS !== "undefined") ? DADOS_ROTAS : [];
+let rotasOcultas = new Set(carregar("rta_geoportal_rotas_ocultas", []));
+const camadasRotasArquivo = {}; // nome -> {linha, cor, km}
+
+function renderizarRotasArquivo(){
+  const secao = document.getElementById("secao-rotas-arquivo");
+  if (!rotasArquivo.length){ secao.style.display = "none"; return; }
+  const raiz = document.getElementById("lista-rotas-arquivo");
+  raiz.innerHTML = "";
+  rotasArquivo.forEach((r, i) => {
+    const cor = CORES_DESENHO[i % CORES_DESENHO.length];
+    const km = fmtDist(distanciaMetros(r.latlngs));
+    const linha = L.polyline(r.latlngs, {color:cor, weight:4, opacity:.9})
+      .bindTooltip(`${r.nome} · ${km}`, {sticky:true})
+      .bindPopup(`<div class="pop-titulo">${esc(r.nome)}</div>
+        <div class="pop-info">Rota do arquivo ${esc(r.arquivo || "")} · ${km}</div>`);
+    camadasRotasArquivo[r.nome] = {linha, cor, km};
+    if (!rotasOcultas.has(r.nome)) linha.addTo(map);
+
+    const el = document.createElement("div");
+    el.className = "linha-camada";
+    el.innerHTML = `
+      <input type="checkbox" title="Mostrar no mapa e na prancha">
+      <span class="chip" style="background:${cor}"></span>
+      <span class="nome">${esc(r.nome)} <small style="color:#64748B">· ${km}</small></span>`;
+    const cb = el.querySelector("input");
+    cb.checked = !rotasOcultas.has(r.nome);
+    cb.addEventListener("change", () => {
+      if (cb.checked){ rotasOcultas.delete(r.nome); linha.addTo(map); }
+      else { rotasOcultas.add(r.nome); map.removeLayer(linha); }
+      salvar("rta_geoportal_rotas_ocultas", [...rotasOcultas]);
+    });
+    el.querySelector(".nome").addEventListener("click", () => {
+      if (!cb.checked){ cb.checked = true; cb.dispatchEvent(new Event("change")); }
+      map.fitBounds(linha.getBounds(), {padding:[40,40]});
+    });
+    raiz.appendChild(el);
   });
 }
 
@@ -900,6 +952,11 @@ function colecaoCompleta(){
       descricao:p.descricao || "", km:p.km || "", origem:"ponto_fixo",
     },
   }));
+  Object.entries(camadasRotasArquivo).forEach(([nome, o]) => {
+    const f = o.linha.toGeoJSON();
+    f.properties = {nome, tipo:"Rota", medida:o.km, origem:"rota_arquivo"};
+    fc.features.push(f);
+  });
   Object.values(camadasDesenho).forEach(l => {
     const f = l.toGeoJSON();
     const {tipo, medida} = infoGeom(l);
@@ -968,7 +1025,7 @@ document.getElementById("arquivo-importar").addEventListener("change", ev => {
       let nFixos = 0, nDesenhos = 0;
       (fc.features || []).forEach(f => {
         const p = f.properties || {};
-        if (p.origem === "ponto_fixo_arquivo") return; // já vêm de dados/pontos_fixos.js
+        if (p.origem === "ponto_fixo_arquivo" || p.origem === "rota_arquivo") return; // já vêm de dados/
         if (p.origem === "ponto_fixo" && f.geometry?.type === "Point"){
           const [lng, lat] = f.geometry.coordinates;
           if (!pontosFixos.some(x => x.id === p.id)){
@@ -1198,6 +1255,10 @@ function itensLegendaPrancha(){
     if (vis.length <= 8) vis.forEach(p => itens.push({tipo:"ponto", cor:c.cor, rot:p.nome}));
     else itens.push({tipo:"ponto", cor:c.cor, rot:`${c.plural} (${vis.length})`});
   });
+  Object.entries(camadasRotasArquivo).forEach(([nome, o]) => {
+    if (map.hasLayer(o.linha) && vb.intersects(o.linha.getBounds()))
+      itens.push({tipo:"linha", cor:o.cor, rot:`${nome} · ${o.km}`});
+  });
   Object.values(camadasDesenho).forEach(l => {
     const cor = l._corRTA || "#DC2626";
     const nome = l._nomeRTA || "(sem nome)";
@@ -1397,6 +1458,7 @@ map.on("locationfound", ev => {
 map.on("locationerror", () => aviso("Não foi possível obter a localização GPS."));
 
 /* ================= Inicialização ================= */
+renderizarRotasArquivo();
 renderizarFixosArquivo();
 renderizarFixos();
 carregarDesenhos();
