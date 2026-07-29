@@ -441,6 +441,7 @@ function popupFixoArquivo(p){
     <div class="pop-info" style="color:#94A3B8">Camada do arquivo ${esc(p.arquivo || "")}</div>
     <div class="pop-acoes">
       <button onclick="rotaDesdeAqui(${p.lat}, ${p.lng})">🛣️ Rota daqui</button>
+      <button onclick="soEsteArquivo('${encodeURIComponent(idArq(p))}')" title="Esconder todas as outras">🎯 Só esta</button>
     </div>`;
 }
 
@@ -450,7 +451,26 @@ const idArq = p => `${p.categoria}|${p.nome}|${p.lat.toFixed(5)},${p.lng.toFixed
 let ocultosArquivo = new Set(carregar("rta_geoportal_fixos_ocultos", []));
 const salvarOcultos = () => salvar("rta_geoportal_fixos_ocultos", [...ocultosArquivo]);
 
+/* deixa visível só o ponto indicado (esconde os demais da mesma categoria) */
+function soEsteArquivo(idCod){
+  const id = decodeURIComponent(idCod);
+  const alvo = fixosArquivo.find(p => idArq(p) === id);
+  if (!alvo) return;
+  fixosArquivo.forEach(p => {
+    if (p.categoria !== alvo.categoria) return;
+    if (idArq(p) === id) ocultosArquivo.delete(idArq(p));
+    else ocultosArquivo.add(idArq(p));
+  });
+  salvarOcultos();
+  map.closePopup();
+  renderizarFixosArquivo();
+  aviso(`Mostrando apenas “${alvo.nome}”. Use a caixa do grupo para reexibir todas.`);
+}
+
 function renderizarFixosArquivo(){
+  /* remove grupos anteriores antes de recriar (evita marcadores duplicados) */
+  Object.values(gruposFixosArquivo).forEach(g => map.removeLayer(g));
+  Object.keys(gruposFixosArquivo).forEach(k => delete gruposFixosArquivo[k]);
   const raiz = document.getElementById("lista-fixos-arquivo");
   raiz.innerHTML = "";
   const porCategoria = {};
@@ -503,7 +523,8 @@ function renderizarFixosArquivo(){
       linha.className = "linha-camada";
       linha.innerHTML = `
         <input type="checkbox" class="chk-ponto" title="Mostrar no mapa e na prancha">
-        <span class="nome" style="font-size:12px">${esc(p.nome)}</span>`;
+        <span class="nome" style="font-size:12px">${esc(p.nome)}</span>
+        <button title="Deixar só esta" onclick="soEsteArquivo('${encodeURIComponent(id)}')">🎯</button>`;
       const cb = linha.querySelector(".chk-ponto");
       cb.checked = !ocultosArquivo.has(id);
       cb.addEventListener("change", () => {
