@@ -78,6 +78,10 @@ def dist_m(a, b):
          + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2)
     return 2 * r * math.asin(math.sqrt(h))
 
+# linhas dos KMZ (ex.: rota do Google Maps no LOTE 11) NÃO entram no mapa;
+# mude para True se um dia quiser importá-las de novo
+IMPORTAR_ROTAS = False
+
 fixos, rotas = [], []
 descartados = 0
 # arquivos de categoria (PEDREIRAS.kmz etc.) primeiro: têm os nomes melhores,
@@ -101,6 +105,8 @@ for arq in origens:
         ponto = pm.find(".//k:Point/k:coordinates", NS)
         linha = pm.find(".//k:LineString/k:coordinates", NS)
         if linha is not None and (linha.text or "").strip():
+            if not IMPORTAR_ROTAS:
+                continue
             latlngs = []
             for par in linha.text.strip().split():
                 lng, lat = [float(v) for v in par.split(",")[:2]]
