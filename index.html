@@ -248,6 +248,8 @@
     <select id="pf-categoria"></select>
     <label>Descrição</label>
     <textarea id="pf-desc" placeholder="Observações, contato, horário..."></textarea>
+    <label>Km na rodovia (opcional — sai na prancha)</label>
+    <input type="text" id="pf-km" placeholder="Ex.: 81,6">
     <label>Localização</label>
     <div class="abas-coord">
       <button type="button" id="aba-geo" class="ativa" onclick="trocarAbaCoord('geo')">Lat / Lon</button>
@@ -442,7 +444,12 @@ function popupFixoArquivo(p){
     </div>`;
 }
 
-const gruposFixosArquivo = {}; // categoria -> layerGroup (p/ legenda da prancha)
+const gruposFixosArquivo = {};  // categoria -> layerGroup
+const idArq = p => `${p.categoria}|${p.nome}|${p.lat.toFixed(5)},${p.lng.toFixed(5)}`;
+/* guarda os OCULTOS: pontos novos de arquivos futuros já nascem visíveis */
+let ocultosArquivo = new Set(carregar("rta_geoportal_fixos_ocultos", []));
+const salvarOcultos = () => salvar("rta_geoportal_fixos_ocultos", [...ocultosArquivo]);
+
 function renderizarFixosArquivo(){
   const raiz = document.getElementById("lista-fixos-arquivo");
   raiz.innerHTML = "";
@@ -450,41 +457,69 @@ function renderizarFixosArquivo(){
   fixosArquivo.forEach(p => (porCategoria[p.categoria] ??= []).push(p));
   Object.entries(porCategoria).forEach(([cat, pontos]) => {
     const c = CATEGORIAS[cat] || CATEGORIAS.outro;
-    const grupo = L.layerGroup(pontos.map(p => {
+    const grupo = L.layerGroup().addTo(map);
+    gruposFixosArquivo[cat] = grupo;
+    const marcadores = {};
+    pontos.forEach(p => {
       const m = L.marker([p.lat, p.lng], {icon:iconeFixo(cat)})
         .bindTooltip(p.nome).bindPopup(() => popupFixoArquivo(p));
       integrarMarcadorRota(m);
-      return m;
-    })).addTo(map);
-    gruposFixosArquivo[cat] = grupo;
+      marcadores[idArq(p)] = m;
+      if (!ocultosArquivo.has(idArq(p))) m.addTo(grupo);
+    });
 
     const det = document.createElement("details");
     det.innerHTML = `
       <summary class="linha-camada" style="cursor:pointer; list-style:none">
-        <input type="checkbox" checked title="Mostrar/ocultar no mapa">
+        <input type="checkbox" title="Mostrar/ocultar todos">
         <span style="font-size:14px">${c.icone}</span>
-        <b style="font-size:13px">${c.plural} (${pontos.length})</b>
+        <b style="font-size:13px">${c.plural} (<span class="qt-vis"></span>/${pontos.length})</b>
       </summary>`;
-    const chk = det.querySelector("input");
-    chk.addEventListener("click", ev => ev.stopPropagation());
-    chk.addEventListener("change", () =>
-      chk.checked ? grupo.addTo(map) : map.removeLayer(grupo));
+    const chkTodos = det.querySelector("input");
+    const qtVis = det.querySelector(".qt-vis");
+    const atualizarCabecalho = () => {
+      const vis = pontos.filter(p => !ocultosArquivo.has(idArq(p))).length;
+      qtVis.textContent = vis;
+      chkTodos.checked = vis === pontos.length;
+      chkTodos.indeterminate = vis > 0 && vis < pontos.length;
+    };
+    chkTodos.addEventListener("click", ev => ev.stopPropagation());
+    chkTodos.addEventListener("change", () => {
+      pontos.forEach(p => {
+        const id = idArq(p), m = marcadores[id];
+        if (chkTodos.checked){ ocultosArquivo.delete(id); if (!grupo.hasLayer(m)) m.addTo(grupo); }
+        else { ocultosArquivo.add(id); grupo.removeLayer(m); }
+      });
+      det.querySelectorAll(".chk-ponto").forEach(cb => cb.checked = chkTodos.checked);
+      atualizarCabecalho();
+      salvarOcultos();
+    });
+
     const corpo = document.createElement("div");
     corpo.style.cssText = "max-height:190px; overflow-y:auto; margin-left:10px";
     pontos.slice().sort((a,b) => a.nome.localeCompare(b.nome, "pt")).forEach(p => {
+      const id = idArq(p), m = marcadores[id];
       const linha = document.createElement("div");
       linha.className = "linha-camada";
-      linha.innerHTML = `<span class="nome" style="font-size:12px">${esc(p.nome)}</span>`;
+      linha.innerHTML = `
+        <input type="checkbox" class="chk-ponto" title="Mostrar no mapa e na prancha">
+        <span class="nome" style="font-size:12px">${esc(p.nome)}</span>`;
+      const cb = linha.querySelector(".chk-ponto");
+      cb.checked = !ocultosArquivo.has(id);
+      cb.addEventListener("change", () => {
+        if (cb.checked){ ocultosArquivo.delete(id); m.addTo(grupo); }
+        else { ocultosArquivo.add(id); grupo.removeLayer(m); }
+        atualizarCabecalho();
+        salvarOcultos();
+      });
       linha.querySelector(".nome").addEventListener("click", () => {
-        if (!chk.checked){ chk.checked = true; grupo.addTo(map); }
+        if (!cb.checked){ cb.checked = true; ocultosArquivo.delete(id); m.addTo(grupo); atualizarCabecalho(); salvarOcultos(); }
         map.setView([p.lat, p.lng], Math.max(map.getZoom(), 13));
-        grupo.getLayers().forEach(m => {
-          const ll = m.getLatLng();
-          if (Math.abs(ll.lat - p.lat) < 1e-9 && Math.abs(ll.lng - p.lng) < 1e-9) m.openPopup();
-        });
+        m.openPopup();
       });
       corpo.appendChild(linha);
     });
+    atualizarCabecalho();
     det.appendChild(corpo);
     raiz.appendChild(det);
   });
@@ -515,7 +550,7 @@ function popupFixo(p){
   const c = CATEGORIAS[p.categoria] || CATEGORIAS.outro;
   const u = paraUTM(p.lat, p.lng);
   return `<div class="pop-titulo">${c.icone} ${esc(p.nome)}</div>
-    <div class="pop-info">${c.label}</div>
+    <div class="pop-info">${c.label}${p.km ? ` · KM ${esc(p.km)}` : ""}</div>
     ${p.descricao ? `<div class="pop-info">${esc(p.descricao)}</div>` : ""}
     <div class="pop-info" style="font-family:monospace">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}<br>
       UTM ${u.zona}S · E ${u.e.toFixed(0)} · N ${u.n.toFixed(0)}</div>
@@ -578,6 +613,7 @@ function abrirModalPonto(id){
   document.getElementById("pf-nome").value = p ? p.nome : "";
   document.getElementById("pf-categoria").value = p ? p.categoria : "cimento";
   document.getElementById("pf-desc").value = p ? (p.descricao || "") : "";
+  document.getElementById("pf-km").value = p ? (p.km || "") : "";
   document.getElementById("pf-lat").value = p ? p.lat.toFixed(6) : "";
   document.getElementById("pf-lng").value = p ? p.lng.toFixed(6) : "";
   if (p){
@@ -619,6 +655,7 @@ function salvarPontoFixo(){
     nome,
     categoria: document.getElementById("pf-categoria").value,
     descricao: document.getElementById("pf-desc").value.trim(),
+    km: document.getElementById("pf-km").value.trim(),
     lat: coords.lat, lng: coords.lng,
   };
   if (editandoId){
@@ -839,7 +876,7 @@ function colecaoCompleta(){
     properties:{
       id:p.id, nome:p.nome, categoria:p.categoria,
       categoria_rotulo:(CATEGORIAS[p.categoria] || CATEGORIAS.outro).label,
-      descricao:p.descricao || "", origem:"ponto_fixo",
+      descricao:p.descricao || "", km:p.km || "", origem:"ponto_fixo",
     },
   }));
   Object.values(camadasDesenho).forEach(l => {
@@ -917,7 +954,7 @@ document.getElementById("arquivo-importar").addEventListener("change", ev => {
             pontosFixos.push({
               id: p.id || novoId(), nome: p.nome || "Importado",
               categoria: CATEGORIAS[p.categoria] ? p.categoria : "outro",
-              descricao: p.descricao || "", lat, lng,
+              descricao: p.descricao || "", km: p.km || "", lat, lng,
             });
             nFixos++;
           }
@@ -1134,10 +1171,11 @@ function itensLegendaPrancha(){
   Object.entries(porCat).forEach(([cat, pts]) => {
     const grupo = gruposFixosArquivo[cat];
     if (!grupo || !map.hasLayer(grupo)) return;
-    const n = pts.filter(p => vb.contains([p.lat, p.lng])).length;
-    if (!n) return;
+    const vis = pts.filter(p => !ocultosArquivo.has(idArq(p)) && vb.contains([p.lat, p.lng]));
+    if (!vis.length) return;
     const c = CATEGORIAS[cat] || CATEGORIAS.outro;
-    itens.push({tipo:"ponto", cor:c.cor, rot:`${c.plural} (${n})`});
+    if (vis.length <= 8) vis.forEach(p => itens.push({tipo:"ponto", cor:c.cor, rot:p.nome}));
+    else itens.push({tipo:"ponto", cor:c.cor, rot:`${c.plural} (${vis.length})`});
   });
   Object.values(camadasDesenho).forEach(l => {
     const cor = l._corRTA || "#DC2626";
@@ -1151,10 +1189,32 @@ function itensLegendaPrancha(){
   });
   return itens;
 }
+/* pontos (com nome/coords/km) que entram no bloco COORDENADAS da prancha */
+function listaCoordenadasPrancha(){
+  const vb = map.getBounds(), lista = [];
+  pontosFixos.forEach(p => {
+    if (vb.contains([p.lat, p.lng])) lista.push({nome:p.nome, lat:p.lat, lng:p.lng, km:p.km || ""});
+  });
+  fixosArquivo.forEach(p => {
+    const grupo = gruposFixosArquivo[p.categoria];
+    if (grupo && map.hasLayer(grupo) && !ocultosArquivo.has(idArq(p)) && vb.contains([p.lat, p.lng]))
+      lista.push({nome:p.nome, lat:p.lat, lng:p.lng, km:""});
+  });
+  Object.values(camadasDesenho).forEach(l => {
+    if (l instanceof L.Marker && vb.contains(l.getLatLng())){
+      const ll = l.getLatLng();
+      lista.push({nome:l._nomeRTA || "(sem nome)", lat:ll.lat, lng:ll.lng, km:""});
+    }
+  });
+  return lista.slice(0, 14);
+}
 function montarPrancha(mapCv, titulo, subtitulo, logo){
   const W = mapCv.width, H = mapCv.height;
+  const coords = listaCoordenadasPrancha();
+  const coordRowH = 22;
+  const coordH = coords.length ? 40 + coords.length * coordRowH + 12 : 0;
   const cv = document.createElement("canvas");
-  cv.width = W; cv.height = H;
+  cv.width = W; cv.height = H + coordH;
   const g = cv.getContext("2d");
   g.drawImage(mapCv, 0, 0);
   const caixa = (x, y, w, h) => {
@@ -1242,6 +1302,20 @@ function montarPrancha(mapCv, titulo, subtitulo, logo){
   const rw = g.measureText(rod).width + 24;
   caixa(14, H - 40, rw, 26);
   texto(rod, 26, H - 22, "11px Segoe UI, Arial", "#334155");
+  /* --- bloco COORDENADAS (abaixo do mapa) --- */
+  if (coords.length){
+    g.fillStyle = "#ffffff"; g.fillRect(0, H, W, coordH);
+    g.strokeStyle = "#0f172a"; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(0, H + .5); g.lineTo(W, H + .5); g.stroke();
+    texto("COORDENADAS:", 24, H + 28, "bold 15px Segoe UI, Arial", "#0f172a");
+    coords.forEach((p, i) => {
+      const y = H + 40 + i * coordRowH + coordRowH * .55;
+      const linha = `${p.nome} (${p.lat.toFixed(6)}°, ${p.lng.toFixed(6)}°)${p.km ? ` - KM ${p.km}` : ""}`;
+      texto(linha, 24, y, "13px Segoe UI, Arial", "#1e293b");
+      g.strokeStyle = "#e2e8f0"; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(20, y + 7); g.lineTo(W - 20, y + 7); g.stroke();
+    });
+  }
   return cv;
 }
 async function gerarPrancha(){
