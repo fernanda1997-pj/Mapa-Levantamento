@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Geoportal RTA — Levantamento de Trechos</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.css">
+<style>
+  :root{
+    --azul:#1E3A72; --azul-claro:#2d4f92; --vermelho:#DC2626;
+    --cinza:#64748B; --fundo:#F1F5F9; --borda:#E2E8F0;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%; font-family:'Segoe UI',system-ui,sans-serif;}
+  #app{display:flex; height:100%;}
+
+  /* ---------- Painel lateral ---------- */
+  #painel{
+    width:330px; min-width:330px; background:#fff; border-right:1px solid var(--borda);
+    display:flex; flex-direction:column; z-index:1100; box-shadow:2px 0 8px rgba(0,0,0,.08);
+  }
+  #painel header{
+    background:var(--azul); color:#fff; padding:12px 14px;
+    display:flex; align-items:center; gap:10px;
+  }
+  #painel header img{height:40px; background:#fff; border-radius:6px; padding:3px;}
+  #painel header h1{font-size:15px; line-height:1.25;}
+  #painel header small{font-weight:400; opacity:.85; font-size:11px; display:block;}
+  #painel .conteudo{flex:1; overflow-y:auto; padding:10px;}
+
+  details.secao{border:1px solid var(--borda); border-radius:8px; margin-bottom:10px; background:#fff;}
+  details.secao summary{
+    cursor:pointer; padding:9px 12px; font-weight:600; font-size:13px; color:var(--azul);
+    user-select:none; display:flex; align-items:center; gap:8px;
+  }
+  details.secao summary::marker{color:var(--cinza);}
+  details.secao .corpo{padding:4px 12px 12px;}
+
+  .linha-camada{display:flex; align-items:center; gap:8px; padding:5px 2px; font-size:13px;}
+  .linha-camada .chip{width:14px; height:14px; border-radius:4px; border:1px solid rgba(0,0,0,.25); flex:none;}
+  .linha-camada .nome{flex:1; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .linha-camada .nome:hover{color:var(--azul); text-decoration:underline;}
+  .linha-camada button{border:none; background:none; cursor:pointer; font-size:13px; padding:2px; opacity:.65;}
+  .linha-camada button:hover{opacity:1;}
+
+  .radio-base{display:flex; gap:6px; flex-wrap:wrap;}
+  .radio-base label{
+    flex:1; text-align:center; font-size:12px; padding:6px 4px; border:1px solid var(--borda);
+    border-radius:6px; cursor:pointer;
+  }
+  .radio-base input{display:none;}
+  .radio-base label:has(input:checked){background:var(--azul); color:#fff; border-color:var(--azul);}
+
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:6px;
+    background:var(--azul); color:#fff; border:none; border-radius:7px;
+    padding:8px 12px; font-size:13px; cursor:pointer; width:100%;
+  }
+  .btn:hover{background:var(--azul-claro);}
+  .btn.secundario{background:#fff; color:var(--azul); border:1px solid var(--azul);}
+  .btn.secundario:hover{background:var(--fundo);}
+  .grupo-btn{display:flex; gap:6px; margin-top:6px;}
+  .vazio{font-size:12px; color:var(--cinza); font-style:italic; padding:4px 0;}
+  .dica{font-size:11px; color:var(--cinza); margin-top:6px; line-height:1.45;}
+  #status-salvo{font-size:11px; color:#059669; text-align:center; padding:6px; border-top:1px solid var(--borda);}
+
+  /* ---------- Mapa ---------- */
+  #map{flex:1; height:100%; z-index:1;}
+  #coords{
+    position:absolute; bottom:8px; right:8px; z-index:1000; background:rgba(255,255,255,.92);
+    border-radius:6px; padding:4px 10px; font-size:11px; font-family:Consolas,monospace;
+    box-shadow:0 1px 4px rgba(0,0,0,.25); pointer-events:none; text-align:right;
+  }
+
+  /* ---------- Modal ---------- */
+  .modal-fundo{
+    position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:2000;
+    display:none; align-items:center; justify-content:center; padding:16px;
+  }
+  .modal-fundo.aberto{display:flex;}
+  .modal{
+    background:#fff; border-radius:12px; width:100%; max-width:400px; padding:18px;
+    box-shadow:0 10px 40px rgba(0,0,0,.35); max-height:92vh; overflow-y:auto;
+  }
+  .modal h2{font-size:15px; color:var(--azul); margin-bottom:12px;}
+  .modal label{font-size:12px; font-weight:600; color:#334155; display:block; margin:10px 0 3px;}
+  .modal input[type=text], .modal input[type=number], .modal select, .modal textarea{
+    width:100%; padding:7px 9px; border:1px solid var(--borda); border-radius:6px; font-size:13px;
+    font-family:inherit;
+  }
+  .modal textarea{resize:vertical; min-height:54px;}
+  .coords-par{display:flex; gap:8px;}
+  .coords-par > div{flex:1;}
+  .modal .acoes{display:flex; gap:8px; margin-top:16px;}
+  .abas-coord{display:flex; gap:6px; margin-bottom:6px;}
+  .abas-coord button{
+    flex:1; font-size:12px; padding:5px; border:1px solid var(--borda); background:#fff;
+    border-radius:6px; cursor:pointer;
+  }
+  .abas-coord button.ativa{background:var(--azul); color:#fff; border-color:var(--azul);}
+
+  /* ---------- Botão flutuante (celular) ---------- */
+  #abrir-painel{
+    display:none; position:absolute; top:10px; right:10px; z-index:1200;
+    background:var(--azul); color:#fff; border:none; border-radius:8px;
+    width:42px; height:42px; font-size:20px; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.35);
+  }
+  @media (max-width:768px){
+    #painel{
+      position:absolute; top:0; left:0; height:100%; width:300px; min-width:300px;
+      transform:translateX(-100%); transition:transform .25s ease;
+    }
+    #painel.aberto{transform:translateX(0);}
+    #abrir-painel{display:block;}
+  }
+
+  /* popup */
+  .pop-titulo{font-weight:700; color:var(--azul); font-size:13px; margin-bottom:2px;}
+  .pop-info{font-size:12px; color:#334155; margin-bottom:2px;}
+  .pop-acoes{display:flex; gap:6px; margin-top:8px;}
+  .pop-acoes button{
+    flex:1; font-size:11px; padding:4px 6px; cursor:pointer;
+    border:1px solid var(--borda); background:#fff; border-radius:5px;
+  }
+  .pop-acoes button:hover{background:var(--fundo);}
+  .marcador-fixo{display:flex; align-items:center; justify-content:center; border-radius:50% 50% 50% 0;
+    transform:rotate(-45deg); border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.4);}
+  .marcador-fixo span{transform:rotate(45deg); font-size:13px;}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="painel">
+    <header>
+      <img src="logo/LOGO RTA.png" alt="RTA">
+      <h1>Geoportal RTA<small>Levantamento de Trechos Rodoviários</small></h1>
+    </header>
+    <div class="conteudo">
+
+      <details class="secao" open>
+        <summary>🗺️ Mapa de fundo</summary>
+        <div class="corpo">
+          <div class="radio-base" id="bases">
+            <label><input type="radio" name="base" value="osm" checked>Padrão</label>
+            <label><input type="radio" name="base" value="sat">Satélite</label>
+            <label><input type="radio" name="base" value="escuro">Escuro</label>
+          </div>
+        </div>
+      </details>
+
+      <details class="secao" open>
+        <summary>🌎 Regiões</summary>
+        <div class="corpo" id="lista-regioes"></div>
+      </details>
+
+      <details class="secao" open>
+        <summary>📌 Pontos fixos</summary>
+        <div class="corpo">
+          <div id="lista-fixos-arquivo"></div>
+          <div id="lista-fixos"></div>
+          <button class="btn" style="margin-top:8px" onclick="abrirModalPonto()">➕ Adicionar ponto fixo</button>
+          <p class="dica">Cimento, canteiro de obras, jazidas etc. Ficam salvos neste navegador e podem ser exportados.</p>
+        </div>
+      </details>
+
+      <details class="secao" open>
+        <summary>✏️ Levantamento (pontos e rotas)</summary>
+        <div class="corpo">
+          <div id="lista-desenhos"></div>
+          <p class="dica">Use a barra de ferramentas no canto do mapa para desenhar
+            <b>pontos</b>, <b>rotas</b> e <b>áreas</b>. Rotas mostram a extensão em km.
+            Para editar ou apagar, use os botões de edição da mesma barra.</p>
+        </div>
+      </details>
+
+      <details class="secao">
+        <summary>💾 Exportar / Importar</summary>
+        <div class="corpo">
+          <button class="btn" onclick="exportarGeoJSON()">⬇️ Exportar GeoJSON</button>
+          <div class="grupo-btn">
+            <button class="btn secundario" onclick="exportarKML()">⬇️ KML (Google Earth)</button>
+            <button class="btn secundario" onclick="document.getElementById('arquivo-importar').click()">⬆️ Importar</button>
+          </div>
+          <input type="file" id="arquivo-importar" accept=".geojson,.json" style="display:none">
+          <p class="dica">Exporta pontos fixos + levantamento. O GeoJSON pode ser aberto no ArcGIS/QGIS
+            e reimportado aqui em outro computador.</p>
+        </div>
+      </details>
+
+    </div>
+    <div id="status-salvo">✓ alterações salvas automaticamente</div>
+  </aside>
+
+  <button id="abrir-painel" onclick="document.getElementById('painel').classList.toggle('aberto')">☰</button>
+  <div id="map"></div>
+  <div id="coords"></div>
+</div>
+
+<!-- Modal nome / confirmação -->
+<div class="modal-fundo" id="modal-mini">
+  <div class="modal" style="max-width:340px">
+    <h2 id="mini-titulo"></h2>
+    <p id="mini-texto" class="pop-info" style="display:none"></p>
+    <input type="text" id="mini-input" style="display:none">
+    <div class="acoes">
+      <button class="btn secundario" id="mini-cancelar">Cancelar</button>
+      <button class="btn" id="mini-ok">OK</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:3000;
+  background:#0F172A;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;display:none;
+  box-shadow:0 4px 16px rgba(0,0,0,.4);max-width:90vw;text-align:center"></div>
+
+<!-- Modal ponto fixo -->
+<div class="modal-fundo" id="modal-ponto">
+  <div class="modal">
+    <h2 id="modal-titulo">Novo ponto fixo</h2>
+    <label>Nome *</label>
+    <input type="text" id="pf-nome" placeholder="Ex.: Cimento — Depósito Palmas">
+    <label>Categoria</label>
+    <select id="pf-categoria"></select>
+    <label>Descrição</label>
+    <textarea id="pf-desc" placeholder="Observações, contato, horário..."></textarea>
+    <label>Localização</label>
+    <div class="abas-coord">
+      <button type="button" id="aba-geo" class="ativa" onclick="trocarAbaCoord('geo')">Lat / Lon</button>
+      <button type="button" id="aba-utm" onclick="trocarAbaCoord('utm')">UTM (SIRGAS)</button>
+    </div>
+    <div id="coords-geo" class="coords-par">
+      <div><label>Latitude</label><input type="number" step="any" id="pf-lat" placeholder="-10.184"></div>
+      <div><label>Longitude</label><input type="number" step="any" id="pf-lng" placeholder="-48.333"></div>
+    </div>
+    <div id="coords-utm" class="coords-par" style="display:none">
+      <div><label>Este (m)</label><input type="number" step="any" id="pf-este"></div>
+      <div><label>Norte (m)</label><input type="number" step="any" id="pf-norte"></div>
+      <div style="flex:0 0 84px"><label>Zona</label>
+        <select id="pf-zona"><option value="22">22 S</option><option value="23">23 S</option></select>
+      </div>
+    </div>
+    <button class="btn secundario" style="margin-top:8px" onclick="capturarNoMapa()">🎯 Clicar no mapa para posicionar</button>
+    <div class="acoes">
+      <button class="btn secundario" onclick="fecharModalPonto()">Cancelar</button>
+      <button class="btn" onclick="salvarPontoFixo()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.18.3/dist/leaflet-geoman.min.js"></script>
+<script src="https://unpkg.com/proj4@2.11.0/dist/proj4.js"></script>
+<script src="dados/regioes.js"></script>
+<script src="dados/pontos_fixos.js"></script>
+<script>
+"use strict";
+/* ================= Configuração ================= */
+const CORES_REGIOES = {1:"#7391B5", 2:"#74A88E", 3:"#A88BB5", 11:"#C49A6C", 12:"#B57A8A", 13:"#8A9E6B"};
+const CATEGORIAS = {
+  pedreira: {label:"Pedreira",          cor:"#57534E", icone:"🪨", plural:"Pedreiras"},
+  cimento:  {label:"Cimento",           cor:"#64748B", icone:"🏭", plural:"Cimento"},
+  canteiro: {label:"Canteiro de obras", cor:"#DC2626", icone:"🏗️", plural:"Canteiros de obras"},
+  jazida:   {label:"Jazida",            cor:"#B45309", icone:"⛏️", plural:"Jazidas"},
+  usina:    {label:"Usina de asfalto",  cor:"#1F2937", icone:"🛢️", plural:"Usinas de asfalto"},
+  apoio:    {label:"Ponto de apoio",    cor:"#059669", icone:"🏠", plural:"Pontos de apoio"},
+  outro:    {label:"Outro",             cor:"#7C3AED", icone:"📍", plural:"Outros"},
+};
+const CHAVE_FIXOS = "rta_geoportal_pontos_fixos";
+const CHAVE_DESENHOS = "rta_geoportal_desenhos";
+proj4.defs("UTM22S", "+proj=utm +zone=22 +south +ellps=GRS80 +towgs84=0,0,0 +units=m +no_defs");
+proj4.defs("UTM23S", "+proj=utm +zone=23 +south +ellps=GRS80 +towgs84=0,0,0 +units=m +no_defs");
+
+/* ================= Mapa base ================= */
+const bases = {
+  osm: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      {maxZoom:19, attribution:"© OpenStreetMap"}),
+  sat: L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      {maxZoom:19, attribution:"© Esri"}),
+  escuro: L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      {maxZoom:19, attribution:"© CARTO"}),
+};
+const map = L.map("map", {zoomControl:true, layers:[bases.osm]});
+map.fitBounds([[-13.47, -50.75], [-5.16, -46.08]]);
+L.control.scale({imperial:false, position:"bottomleft"}).addTo(map);
+
+document.getElementById("bases").addEventListener("change", e => {
+  Object.values(bases).forEach(b => map.removeLayer(b));
+  bases[e.target.value].addTo(map);
+});
+
+/* ================= Regiões ================= */
+const camadasRegioes = {};
+const listaRegioesEl = document.getElementById("lista-regioes");
+DADOS_REGIOES.features.forEach(f => {
+  const num = f.properties.REGIAO;
+  const cor = CORES_REGIOES[num] || "#94A3B8";
+  const nome = (f.properties.NOMEREG || ("Região " + num))
+                 .replace(/^REGIÃO/i, "Região");
+  const camada = L.geoJSON(f, {
+    style:{color:cor, weight:2.5, fillColor:cor, fillOpacity:0.10},
+  }).bindTooltip(nome, {sticky:true}).addTo(map);
+  camadasRegioes[num] = camada;
+
+  const linha = document.createElement("div");
+  linha.className = "linha-camada";
+  linha.innerHTML = `
+    <input type="checkbox" checked>
+    <span class="chip" style="background:${cor}"></span>
+    <span class="nome" title="Aproximar">${nome}</span>`;
+  linha.querySelector("input").addEventListener("change", ev =>
+    ev.target.checked ? camada.addTo(map) : map.removeLayer(camada));
+  linha.querySelector(".nome").addEventListener("click", () =>
+    map.fitBounds(camada.getBounds(), {padding:[30,30]}));
+  listaRegioesEl.appendChild(linha);
+});
+
+/* ================= Utilidades ================= */
+const salvar = (chave, valor) => {
+  localStorage.setItem(chave, JSON.stringify(valor));
+  const s = document.getElementById("status-salvo");
+  s.textContent = "✓ salvo às " + new Date().toLocaleTimeString("pt-BR");
+};
+const carregar = (chave, padrao) => {
+  try { return JSON.parse(localStorage.getItem(chave)) || padrao; }
+  catch { return padrao; }
+};
+const novoId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+/* diálogos próprios (prompt/confirm nativos não funcionam bem em todos os ambientes) */
+let miniCallback = null;
+function dialogoNome(titulo, valorInicial, cb){
+  document.getElementById("mini-titulo").textContent = titulo;
+  const inp = document.getElementById("mini-input");
+  inp.style.display = "block"; inp.value = valorInicial || "";
+  document.getElementById("mini-texto").style.display = "none";
+  miniCallback = () => cb(inp.value.trim());
+  document.getElementById("modal-mini").classList.add("aberto");
+  setTimeout(() => { inp.focus(); inp.select(); }, 50);
+}
+function dialogoConfirmar(texto, cb){
+  document.getElementById("mini-titulo").textContent = "Confirmar";
+  const t = document.getElementById("mini-texto");
+  t.style.display = "block"; t.textContent = texto;
+  document.getElementById("mini-input").style.display = "none";
+  miniCallback = cb;
+  document.getElementById("modal-mini").classList.add("aberto");
+}
+document.getElementById("mini-ok").addEventListener("click", () => {
+  document.getElementById("modal-mini").classList.remove("aberto");
+  if (miniCallback){ const cb = miniCallback; miniCallback = null; cb(); }
+});
+document.getElementById("mini-cancelar").addEventListener("click", () => {
+  document.getElementById("modal-mini").classList.remove("aberto");
+  miniCallback = null;
+});
+document.getElementById("mini-input").addEventListener("keydown", ev => {
+  if (ev.key === "Enter") document.getElementById("mini-ok").click();
+});
+let toastTimer = null;
+function aviso(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.style.display = "block";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.style.display = "none", 3500);
+}
+const esc = t => String(t ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function distanciaMetros(latlngs){
+  let d = 0;
+  for (let i = 1; i < latlngs.length; i++) d += map.distance(latlngs[i-1], latlngs[i]);
+  return d;
+}
+const fmtDist = m => m < 1000 ? m.toFixed(0) + " m" : (m/1000).toFixed(2) + " km";
+
+function areaM2(latlngs){ // shoelace em UTM (aprox. boa para escala de obra)
+  if (latlngs.length < 3) return 0;
+  const zona = latlngs[0].lng < -48 ? "UTM22S" : "UTM23S";
+  const pts = latlngs.map(p => proj4("WGS84", zona, [p.lng, p.lat]));
+  let a = 0;
+  for (let i = 0; i < pts.length; i++){
+    const [x1,y1] = pts[i], [x2,y2] = pts[(i+1) % pts.length];
+    a += x1*y2 - x2*y1;
+  }
+  return Math.abs(a/2);
+}
+const fmtArea = m2 => m2 < 10000 ? m2.toFixed(0) + " m²" : (m2/10000).toFixed(2) + " ha";
+
+function paraUTM(lat, lng){
+  const zona = lng < -48 ? 22 : 23;
+  const [e, n] = proj4("WGS84", "UTM" + zona + "S", [lng, lat]);
+  return {e, n, zona};
+}
+
+/* Coordenadas do cursor */
+map.on("mousemove", ev => {
+  const {lat, lng} = ev.latlng;
+  const u = paraUTM(lat, lng);
+  document.getElementById("coords").innerHTML =
+    `${lat.toFixed(5)}, ${lng.toFixed(5)}<br>` +
+    `UTM ${u.zona}S &nbsp;E ${u.e.toFixed(0)} &nbsp;N ${u.n.toFixed(0)}`;
+});
+
+/* ================= Pontos fixos de arquivo (dados/pontos_fixos.js) ================= */
+const fixosArquivo = (typeof DADOS_PONTOS_FIXOS !== "undefined") ? DADOS_PONTOS_FIXOS : [];
+
+function popupFixoArquivo(p){
+  const c = CATEGORIAS[p.categoria] || CATEGORIAS.outro;
+  const u = paraUTM(p.lat, p.lng);
+  return `<div class="pop-titulo">${c.icone} ${esc(p.nome)}</div>
+    <div class="pop-info">${c.label}</div>
+    ${p.descricao ? `<div class="pop-info">${esc(p.descricao)}</div>` : ""}
+    <div class="pop-info" style="font-family:monospace">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}<br>
+      UTM ${u.zona}S · E ${u.e.toFixed(0)} · N ${u.n.toFixed(0)}</div>
+    <div class="pop-info" style="color:#94A3B8">Camada do arquivo ${esc(p.arquivo || "")}</div>`;
+}
+
+function renderizarFixosArquivo(){
+  const raiz = document.getElementById("lista-fixos-arquivo");
+  raiz.innerHTML = "";
+  const porCategoria = {};
+  fixosArquivo.forEach(p => (porCategoria[p.categoria] ??= []).push(p));
+  Object.entries(porCategoria).forEach(([cat, pontos]) => {
+    const c = CATEGORIAS[cat] || CATEGORIAS.outro;
+    const grupo = L.layerGroup(pontos.map(p =>
+      L.marker([p.lat, p.lng], {icon:iconeFixo(cat)})
+        .bindTooltip(p.nome).bindPopup(() => popupFixoArquivo(p))
+    )).addTo(map);
+
+    const det = document.createElement("details");
+    det.innerHTML = `
+      <summary class="linha-camada" style="cursor:pointer; list-style:none">
+        <input type="checkbox" checked title="Mostrar/ocultar no mapa">
+        <span style="font-size:14px">${c.icone}</span>
+        <b style="font-size:13px">${c.plural} (${pontos.length})</b>
+      </summary>`;
+    const chk = det.querySelector("input");
+    chk.addEventListener("click", ev => ev.stopPropagation());
+    chk.addEventListener("change", () =>
+      chk.checked ? grupo.addTo(map) : map.removeLayer(grupo));
+    const corpo = document.createElement("div");
+    corpo.style.cssText = "max-height:190px; overflow-y:auto; margin-left:10px";
+    pontos.slice().sort((a,b) => a.nome.localeCompare(b.nome, "pt")).forEach(p => {
+      const linha = document.createElement("div");
+      linha.className = "linha-camada";
+      linha.innerHTML = `<span class="nome" style="font-size:12px">${esc(p.nome)}</span>`;
+      linha.querySelector(".nome").addEventListener("click", () => {
+        if (!chk.checked){ chk.checked = true; grupo.addTo(map); }
+        map.setView([p.lat, p.lng], Math.max(map.getZoom(), 13));
+        grupo.getLayers().forEach(m => {
+          const ll = m.getLatLng();
+          if (Math.abs(ll.lat - p.lat) < 1e-9 && Math.abs(ll.lng - p.lng) < 1e-9) m.openPopup();
+        });
+      });
+      corpo.appendChild(linha);
+    });
+    det.appendChild(corpo);
+    raiz.appendChild(det);
+  });
+}
+
+/* ================= Pontos fixos ================= */
+let pontosFixos = carregar(CHAVE_FIXOS, []);
+const grupoFixos = L.layerGroup().addTo(map);
+const marcadoresFixos = {};
+
+const selCat = document.getElementById("pf-categoria");
+Object.entries(CATEGORIAS).forEach(([k, c]) => {
+  const o = document.createElement("option");
+  o.value = k; o.textContent = c.icone + " " + c.label;
+  selCat.appendChild(o);
+});
+
+function iconeFixo(cat){
+  const c = CATEGORIAS[cat] || CATEGORIAS.outro;
+  return L.divIcon({
+    className:"",
+    html:`<div class="marcador-fixo" style="background:${c.cor};width:30px;height:30px"><span>${c.icone}</span></div>`,
+    iconSize:[30,30], iconAnchor:[15,28], popupAnchor:[0,-26],
+  });
+}
+
+function popupFixo(p){
+  const c = CATEGORIAS[p.categoria] || CATEGORIAS.outro;
+  const u = paraUTM(p.lat, p.lng);
+  return `<div class="pop-titulo">${c.icone} ${esc(p.nome)}</div>
+    <div class="pop-info">${c.label}</div>
+    ${p.descricao ? `<div class="pop-info">${esc(p.descricao)}</div>` : ""}
+    <div class="pop-info" style="font-family:monospace">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}<br>
+      UTM ${u.zona}S · E ${u.e.toFixed(0)} · N ${u.n.toFixed(0)}</div>
+    <div class="pop-acoes">
+      <button onclick="abrirModalPonto('${p.id}')">✏️ Editar</button>
+      <button onclick="excluirPontoFixo('${p.id}')">🗑️ Excluir</button>
+    </div>`;
+}
+
+function renderizarFixos(){
+  grupoFixos.clearLayers();
+  Object.keys(marcadoresFixos).forEach(k => delete marcadoresFixos[k]);
+  const lista = document.getElementById("lista-fixos");
+  lista.innerHTML = "";
+  if (!pontosFixos.length){
+    lista.innerHTML = `<div class="vazio">Nenhum ponto fixo cadastrado ainda.</div>`;
+  }
+  pontosFixos.forEach(p => {
+    const c = CATEGORIAS[p.categoria] || CATEGORIAS.outro;
+    const m = L.marker([p.lat, p.lng], {icon:iconeFixo(p.categoria), draggable:true})
+      .bindPopup(() => popupFixo(p)).addTo(grupoFixos);
+    m.on("dragend", () => {
+      const ll = m.getLatLng();
+      p.lat = ll.lat; p.lng = ll.lng;
+      salvar(CHAVE_FIXOS, pontosFixos);
+    });
+    marcadoresFixos[p.id] = m;
+
+    const linha = document.createElement("div");
+    linha.className = "linha-camada";
+    linha.innerHTML = `
+      <span style="font-size:14px">${c.icone}</span>
+      <span class="nome" title="${c.label}">${esc(p.nome)}</span>
+      <button title="Editar" onclick="abrirModalPonto('${p.id}')">✏️</button>
+      <button title="Excluir" onclick="excluirPontoFixo('${p.id}')">🗑️</button>`;
+    linha.querySelector(".nome").addEventListener("click", () => {
+      map.setView([p.lat, p.lng], Math.max(map.getZoom(), 14));
+      m.openPopup();
+    });
+    lista.appendChild(linha);
+  });
+}
+
+/* --- modal --- */
+let editandoId = null;
+let abaCoord = "geo";
+function trocarAbaCoord(aba){
+  abaCoord = aba;
+  document.getElementById("aba-geo").classList.toggle("ativa", aba === "geo");
+  document.getElementById("aba-utm").classList.toggle("ativa", aba === "utm");
+  document.getElementById("coords-geo").style.display = aba === "geo" ? "flex" : "none";
+  document.getElementById("coords-utm").style.display = aba === "utm" ? "flex" : "none";
+}
+function abrirModalPonto(id){
+  editandoId = id || null;
+  const p = pontosFixos.find(x => x.id === id);
+  document.getElementById("modal-titulo").textContent = p ? "Editar ponto fixo" : "Novo ponto fixo";
+  document.getElementById("pf-nome").value = p ? p.nome : "";
+  document.getElementById("pf-categoria").value = p ? p.categoria : "cimento";
+  document.getElementById("pf-desc").value = p ? (p.descricao || "") : "";
+  document.getElementById("pf-lat").value = p ? p.lat.toFixed(6) : "";
+  document.getElementById("pf-lng").value = p ? p.lng.toFixed(6) : "";
+  if (p){
+    const u = paraUTM(p.lat, p.lng);
+    document.getElementById("pf-este").value = u.e.toFixed(1);
+    document.getElementById("pf-norte").value = u.n.toFixed(1);
+    document.getElementById("pf-zona").value = u.zona;
+  } else {
+    document.getElementById("pf-este").value = "";
+    document.getElementById("pf-norte").value = "";
+  }
+  trocarAbaCoord("geo");
+  document.getElementById("modal-ponto").classList.add("aberto");
+  map.closePopup();
+}
+function fecharModalPonto(){ document.getElementById("modal-ponto").classList.remove("aberto"); }
+
+function lerCoordsModal(){
+  if (abaCoord === "utm"){
+    const e = parseFloat(document.getElementById("pf-este").value);
+    const n = parseFloat(document.getElementById("pf-norte").value);
+    const zona = document.getElementById("pf-zona").value;
+    if (isNaN(e) || isNaN(n)) return null;
+    const [lng, lat] = proj4("UTM" + zona + "S", "WGS84", [e, n]);
+    return {lat, lng};
+  }
+  const lat = parseFloat(document.getElementById("pf-lat").value);
+  const lng = parseFloat(document.getElementById("pf-lng").value);
+  if (isNaN(lat) || isNaN(lng)) return null;
+  return {lat, lng};
+}
+
+function salvarPontoFixo(){
+  const nome = document.getElementById("pf-nome").value.trim();
+  if (!nome){ aviso("Informe o nome do ponto."); return; }
+  const coords = lerCoordsModal();
+  if (!coords){ aviso("Informe as coordenadas ou use “Clicar no mapa”."); return; }
+  const dados = {
+    nome,
+    categoria: document.getElementById("pf-categoria").value,
+    descricao: document.getElementById("pf-desc").value.trim(),
+    lat: coords.lat, lng: coords.lng,
+  };
+  if (editandoId){
+    Object.assign(pontosFixos.find(x => x.id === editandoId), dados);
+  } else {
+    pontosFixos.push({id: novoId(), ...dados});
+  }
+  salvar(CHAVE_FIXOS, pontosFixos);
+  renderizarFixos();
+  fecharModalPonto();
+}
+
+function excluirPontoFixo(id){
+  const p = pontosFixos.find(x => x.id === id);
+  if (!p) return;
+  dialogoConfirmar(`Excluir o ponto “${p.nome}”?`, () => {
+    pontosFixos = pontosFixos.filter(x => x.id !== id);
+    salvar(CHAVE_FIXOS, pontosFixos);
+    renderizarFixos();
+  });
+}
+
+function capturarNoMapa(){
+  fecharModalPonto();
+  document.getElementById("painel").classList.remove("aberto");
+  map.getContainer().style.cursor = "crosshair";
+  const aviso = L.control({position:"topright"});
+  aviso.onAdd = () => {
+    const d = L.DomUtil.create("div");
+    d.style.cssText = "background:#1E3A72;color:#fff;padding:8px 14px;border-radius:8px;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.4)";
+    d.textContent = "Clique no mapa para posicionar o ponto";
+    return d;
+  };
+  aviso.addTo(map);
+  map.once("click", ev => {
+    map.getContainer().style.cursor = "";
+    map.removeControl(aviso);
+    document.getElementById("pf-lat").value = ev.latlng.lat.toFixed(6);
+    document.getElementById("pf-lng").value = ev.latlng.lng.toFixed(6);
+    const u = paraUTM(ev.latlng.lat, ev.latlng.lng);
+    document.getElementById("pf-este").value = u.e.toFixed(1);
+    document.getElementById("pf-norte").value = u.n.toFixed(1);
+    document.getElementById("pf-zona").value = u.zona;
+    document.getElementById("modal-ponto").classList.add("aberto");
+  });
+}
+
+/* ================= Levantamento (desenhos) ================= */
+map.pm.setLang("pt_br");
+map.pm.addControls({
+  position:"topleft",
+  drawMarker:true, drawPolyline:true, drawPolygon:true,
+  drawCircle:false, drawCircleMarker:false, drawRectangle:false, drawText:false,
+  cutPolygon:false, rotateMode:false,
+});
+map.pm.setGlobalOptions({
+  templineStyle:{color:"#DC2626"},
+  hintlineStyle:{color:"#DC2626", dashArray:[5,5]},
+  pathOptions:{color:"#DC2626", weight:4},
+});
+
+const grupoDesenhos = L.layerGroup().addTo(map);
+const camadasDesenho = {}; // id -> layer
+
+function infoGeom(layer){
+  if (layer instanceof L.Marker) return {tipo:"Ponto", medida:""};
+  if (layer instanceof L.Polygon){
+    const a = areaM2(layer.getLatLngs()[0]);
+    return {tipo:"Área", medida:fmtArea(a)};
+  }
+  if (layer instanceof L.Polyline){
+    const d = distanciaMetros(layer.getLatLngs());
+    return {tipo:"Rota", medida:fmtDist(d)};
+  }
+  return {tipo:"Elemento", medida:""};
+}
+
+function popupDesenho(layer){
+  const nome = layer._nomeRTA || "(sem nome)";
+  const {tipo, medida} = infoGeom(layer);
+  return `<div class="pop-titulo">${esc(nome)}</div>
+    <div class="pop-info">${tipo}${medida ? " · " + medida : ""}</div>
+    <div class="pop-acoes">
+      <button onclick="renomearDesenho('${layer._idRTA}')">✏️ Renomear</button>
+      <button onclick="excluirDesenho('${layer._idRTA}')">🗑️ Excluir</button>
+    </div>`;
+}
+
+function registrarDesenho(layer, nome){
+  const id = layer._idRTA || novoId();
+  layer._idRTA = id;
+  layer._nomeRTA = nome;
+  camadasDesenho[id] = layer;
+  layer.addTo(grupoDesenhos);
+  if (layer.setStyle && !(layer instanceof L.Marker)){
+    layer.setStyle({color:"#DC2626", weight:4});
+  }
+  if (layer instanceof L.Marker){
+    layer.setIcon(L.divIcon({
+      className:"",
+      html:`<div style="width:16px;height:16px;border-radius:50%;background:#DC2626;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)"></div>`,
+      iconSize:[16,16], iconAnchor:[8,8],
+    }));
+  }
+  layer.bindPopup(() => popupDesenho(layer));
+  layer.on("pm:edit pm:dragend pm:markerdragend", salvarDesenhos);
+  layer.on("pm:remove", () => {
+    delete camadasDesenho[id];
+    salvarDesenhos();
+  });
+}
+
+function salvarDesenhos(){
+  const fc = {type:"FeatureCollection", features:[]};
+  Object.values(camadasDesenho).forEach(l => {
+    const f = l.toGeoJSON();
+    f.properties = {id:l._idRTA, nome:l._nomeRTA || "", origem:"levantamento"};
+    fc.features.push(f);
+  });
+  salvar(CHAVE_DESENHOS, fc);
+  renderizarListaDesenhos();
+}
+
+function renderizarListaDesenhos(){
+  const lista = document.getElementById("lista-desenhos");
+  lista.innerHTML = "";
+  const camadas = Object.values(camadasDesenho);
+  if (!camadas.length){
+    lista.innerHTML = `<div class="vazio">Nada desenhado ainda.</div>`;
+    return;
+  }
+  camadas.forEach(l => {
+    const {tipo, medida} = infoGeom(l);
+    const ic = tipo === "Ponto" ? "📍" : tipo === "Rota" ? "〰️" : "⬠";
+    const linha = document.createElement("div");
+    linha.className = "linha-camada";
+    linha.innerHTML = `
+      <span style="font-size:13px">${ic}</span>
+      <span class="nome">${esc(l._nomeRTA || "(sem nome)")}${medida ? ` <small style="color:#64748B">· ${medida}</small>` : ""}</span>
+      <button title="Renomear" onclick="renomearDesenho('${l._idRTA}')">✏️</button>
+      <button title="Excluir" onclick="excluirDesenho('${l._idRTA}')">🗑️</button>`;
+    linha.querySelector(".nome").addEventListener("click", () => {
+      if (l.getBounds) map.fitBounds(l.getBounds(), {padding:[40,40], maxZoom:16});
+      else map.setView(l.getLatLng(), Math.max(map.getZoom(), 15));
+      l.openPopup();
+    });
+    lista.appendChild(linha);
+  });
+}
+
+function renomearDesenho(id){
+  const l = camadasDesenho[id];
+  if (!l) return;
+  dialogoNome("Nome do elemento", l._nomeRTA || "", nome => {
+    if (nome) l._nomeRTA = nome;
+    l.closePopup();
+    salvarDesenhos();
+  });
+}
+function excluirDesenho(id){
+  const l = camadasDesenho[id];
+  if (!l) return;
+  dialogoConfirmar(`Excluir “${l._nomeRTA || "elemento sem nome"}”?`, () => {
+    grupoDesenhos.removeLayer(l);
+    delete camadasDesenho[id];
+    salvarDesenhos();
+  });
+}
+
+map.on("pm:create", ev => {
+  const layer = ev.layer;
+  const {tipo, medida} = infoGeom(layer);
+  const sugestao = tipo + " " + (Object.keys(camadasDesenho).length + 1);
+  registrarDesenho(layer, sugestao);
+  salvarDesenhos();
+  dialogoNome(`Nome (${tipo}${medida ? " · " + medida : ""})`, sugestao, nome => {
+    if (nome) layer._nomeRTA = nome;
+    salvarDesenhos();
+  });
+});
+
+function carregarDesenhos(){
+  const fc = carregar(CHAVE_DESENHOS, null);
+  if (!fc || !fc.features) { renderizarListaDesenhos(); return; }
+  fc.features.forEach(f => {
+    L.geoJSON(f, {
+      onEachFeature: (feat, layer) => {
+        layer._idRTA = feat.properties?.id || novoId();
+        registrarDesenho(layer, feat.properties?.nome || "");
+      },
+    });
+  });
+  renderizarListaDesenhos();
+}
+
+/* ================= Exportar / Importar ================= */
+function colecaoCompleta(){
+  const fc = {type:"FeatureCollection", features:[]};
+  fixosArquivo.forEach(p => fc.features.push({
+    type:"Feature",
+    geometry:{type:"Point", coordinates:[p.lng, p.lat]},
+    properties:{
+      nome:p.nome, categoria:p.categoria,
+      categoria_rotulo:(CATEGORIAS[p.categoria] || CATEGORIAS.outro).label,
+      descricao:p.descricao || "", origem:"ponto_fixo_arquivo", arquivo:p.arquivo || "",
+    },
+  }));
+  pontosFixos.forEach(p => fc.features.push({
+    type:"Feature",
+    geometry:{type:"Point", coordinates:[p.lng, p.lat]},
+    properties:{
+      id:p.id, nome:p.nome, categoria:p.categoria,
+      categoria_rotulo:(CATEGORIAS[p.categoria] || CATEGORIAS.outro).label,
+      descricao:p.descricao || "", origem:"ponto_fixo",
+    },
+  }));
+  Object.values(camadasDesenho).forEach(l => {
+    const f = l.toGeoJSON();
+    const {tipo, medida} = infoGeom(l);
+    f.properties = {id:l._idRTA, nome:l._nomeRTA || "", tipo, medida, origem:"levantamento"};
+    fc.features.push(f);
+  });
+  return fc;
+}
+
+function baixar(nomeArq, conteudo, mime){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([conteudo], {type:mime}));
+  a.download = nomeArq;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+const carimbo = () => new Date().toISOString().slice(0,10);
+
+function exportarGeoJSON(){
+  const fc = colecaoCompleta();
+  if (!fc.features.length){ aviso("Nada para exportar ainda."); return; }
+  baixar(`levantamento_rta_${carimbo()}.geojson`, JSON.stringify(fc, null, 2), "application/geo+json");
+}
+
+function corKML(hex){ // #RRGGBB -> aabbggrr
+  return "ff" + hex.slice(5,7) + hex.slice(3,5) + hex.slice(1,3);
+}
+function exportarKML(){
+  const fc = colecaoCompleta();
+  if (!fc.features.length){ aviso("Nada para exportar ainda."); return; }
+  let kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+<name>Levantamento RTA ${carimbo()}</name>
+<Style id="rota"><LineStyle><color>${corKML("#DC2626")}</color><width>4</width></LineStyle></Style>
+<Style id="area"><LineStyle><color>${corKML("#DC2626")}</color><width>3</width></LineStyle>
+<PolyStyle><color>4d2626DC</color></PolyStyle></Style>\n`;
+  const escXml = t => String(t ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  fc.features.forEach(f => {
+    const p = f.properties, g = f.geometry;
+    const nome = escXml(p.nome || "(sem nome)");
+    const desc = escXml([p.categoria_rotulo, p.descricao, p.medida].filter(Boolean).join(" · "));
+    if (g.type === "Point"){
+      kml += `<Placemark><name>${nome}</name><description>${desc}</description>` +
+        `<Point><coordinates>${g.coordinates[0]},${g.coordinates[1]},0</coordinates></Point></Placemark>\n`;
+    } else if (g.type === "LineString"){
+      const cs = g.coordinates.map(c => `${c[0]},${c[1]},0`).join(" ");
+      kml += `<Placemark><name>${nome}</name><description>${desc}</description><styleUrl>#rota</styleUrl>` +
+        `<LineString><tessellate>1</tessellate><coordinates>${cs}</coordinates></LineString></Placemark>\n`;
+    } else if (g.type === "Polygon"){
+      const cs = g.coordinates[0].map(c => `${c[0]},${c[1]},0`).join(" ");
+      kml += `<Placemark><name>${nome}</name><description>${desc}</description><styleUrl>#area</styleUrl>` +
+        `<Polygon><outerBoundaryIs><LinearRing><coordinates>${cs}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n`;
+    }
+  });
+  kml += `</Document></kml>`;
+  baixar(`levantamento_rta_${carimbo()}.kml`, kml, "application/vnd.google-earth.kml+xml");
+}
+
+document.getElementById("arquivo-importar").addEventListener("change", ev => {
+  const arq = ev.target.files[0];
+  if (!arq) return;
+  const leitor = new FileReader();
+  leitor.onload = () => {
+    try {
+      const fc = JSON.parse(leitor.result);
+      let nFixos = 0, nDesenhos = 0;
+      (fc.features || []).forEach(f => {
+        const p = f.properties || {};
+        if (p.origem === "ponto_fixo_arquivo") return; // já vêm de dados/pontos_fixos.js
+        if (p.origem === "ponto_fixo" && f.geometry?.type === "Point"){
+          const [lng, lat] = f.geometry.coordinates;
+          if (!pontosFixos.some(x => x.id === p.id)){
+            pontosFixos.push({
+              id: p.id || novoId(), nome: p.nome || "Importado",
+              categoria: CATEGORIAS[p.categoria] ? p.categoria : "outro",
+              descricao: p.descricao || "", lat, lng,
+            });
+            nFixos++;
+          }
+        } else if (f.geometry) {
+          if (p.id && camadasDesenho[p.id]) return;
+          L.geoJSON(f, {onEachFeature: (feat, layer) => {
+            layer._idRTA = p.id || novoId();
+            registrarDesenho(layer, p.nome || "Importado");
+            nDesenhos++;
+          }});
+        }
+      });
+      salvar(CHAVE_FIXOS, pontosFixos);
+      renderizarFixos();
+      salvarDesenhos();
+      aviso(`Importado: ${nFixos} ponto(s) fixo(s) e ${nDesenhos} elemento(s) de levantamento.`);
+    } catch (e) {
+      aviso("Não foi possível ler o arquivo. Use um GeoJSON exportado por este geoportal ou pelo QGIS/ArcGIS (WGS84).");
+    }
+    ev.target.value = "";
+  };
+  leitor.readAsText(arq);
+});
+
+/* ================= GPS ================= */
+const BotaoGPS = L.Control.extend({
+  options:{position:"topleft"},
+  onAdd(){
+    const d = L.DomUtil.create("div", "leaflet-bar");
+    const a = L.DomUtil.create("a", "", d);
+    a.href = "#"; a.title = "Minha localização (GPS)"; a.textContent = "🛰️";
+    a.style.fontSize = "16px";
+    L.DomEvent.on(a, "click", ev => {
+      L.DomEvent.stop(ev);
+      map.locate({setView:true, maxZoom:16});
+    });
+    return d;
+  },
+});
+map.addControl(new BotaoGPS());
+let marcadorGPS = null;
+map.on("locationfound", ev => {
+  if (marcadorGPS) map.removeLayer(marcadorGPS);
+  marcadorGPS = L.circleMarker(ev.latlng, {radius:8, color:"#2563EB", fillColor:"#60A5FA", fillOpacity:.8})
+    .bindTooltip("Você está aqui").addTo(map);
+});
+map.on("locationerror", () => aviso("Não foi possível obter a localização GPS."));
+
+/* ================= Inicialização ================= */
+renderizarFixosArquivo();
+renderizarFixos();
+carregarDesenhos();
+</script>
+</body>
+</html>

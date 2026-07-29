@@ -1,0 +1,9 @@
+# só o site vai para o ar: index.html, dados/*.js e logo/
+camadas/
+pontos fixos/
+dados/regioes.geojson
+*.kmz
+*.kml
+*.mxd
+*.py
+README.md
