@@ -221,8 +221,12 @@
     <input type="text" id="pr-titulo" maxlength="80" value="MAPA DE LOCALIZAÇÃO">
     <label>Subtítulo (rodovia / trecho)</label>
     <input type="text" id="pr-sub" maxlength="80" placeholder="Ex.: TO - 280">
-    <p class="dica" style="margin-top:10px">Dica: ative o fundo <b>Satélite</b> e enquadre a área
-      desejada no mapa antes de gerar. A legenda entra sozinha com os pontos e rotas visíveis.</p>
+    <label>Calcular KM pela estrada a partir de</label>
+    <select id="pr-ref"></select>
+    <p class="dica" style="margin-top:10px">Os KM do bloco COORDENADAS são calculados
+      automaticamente pela estrada, do ponto de referência (normalmente o canteiro) até cada ponto.
+      KM digitado à mão no cadastro do ponto tem prioridade.<br>
+      Dica: ative o fundo <b>Satélite</b> e enquadre a área antes de gerar.</p>
     <div class="acoes">
       <button class="btn secundario" onclick="document.getElementById('modal-prancha').classList.remove('aberto')">Cancelar</button>
       <button class="btn" id="pr-gerar" onclick="gerarPrancha()">Gerar PNG</button>
@@ -1235,6 +1239,16 @@ function carregarScriptExt(src, glob){
 }
 function abrirModalPrancha(){
   document.getElementById("painel").classList.remove("aberto");
+  const sel = document.getElementById("pr-ref");
+  sel.innerHTML = `<option value="">(não calcular)</option>`;
+  listaCoordenadasPrancha(Infinity).forEach(p => {
+    const o = document.createElement("option");
+    o.value = `${p.lat},${p.lng}`;
+    o.textContent = p.nome;
+    sel.appendChild(o);
+  });
+  const canteiro = [...sel.options].find(o => /CANTEIRO/i.test(o.textContent));
+  if (canteiro) sel.value = canteiro.value;
   document.getElementById("modal-prancha").classList.add("aberto");
 }
 function itensLegendaPrancha(){
@@ -1271,28 +1285,32 @@ function itensLegendaPrancha(){
   });
   return itens;
 }
-/* pontos (com nome/coords/km) que entram no bloco COORDENADAS da prancha */
-function listaCoordenadasPrancha(){
+/* pontos (com nome/coords/km) que entram no bloco COORDENADAS da prancha;
+   canteiros de obras vêm primeiro (são a referência dos KM) */
+function listaCoordenadasPrancha(limite = 14){
   const vb = map.getBounds(), lista = [];
   pontosFixos.forEach(p => {
-    if (vb.contains([p.lat, p.lng])) lista.push({nome:p.nome, lat:p.lat, lng:p.lng, km:p.km || ""});
+    if (vb.contains([p.lat, p.lng]))
+      lista.push({nome:p.nome, lat:p.lat, lng:p.lng, km:p.km || "", categoria:p.categoria});
   });
   fixosArquivo.forEach(p => {
     const grupo = gruposFixosArquivo[p.categoria];
     if (grupo && map.hasLayer(grupo) && !ocultosArquivo.has(idArq(p)) && vb.contains([p.lat, p.lng]))
-      lista.push({nome:p.nome, lat:p.lat, lng:p.lng, km:""});
+      lista.push({nome:p.nome, lat:p.lat, lng:p.lng, km:"", categoria:p.categoria});
   });
   Object.values(camadasDesenho).forEach(l => {
     if (l instanceof L.Marker && vb.contains(l.getLatLng())){
       const ll = l.getLatLng();
-      lista.push({nome:l._nomeRTA || "(sem nome)", lat:ll.lat, lng:ll.lng, km:""});
+      lista.push({nome:l._nomeRTA || "(sem nome)", lat:ll.lat, lng:ll.lng, km:"", categoria:""});
     }
   });
-  return lista.slice(0, 14);
+  const peso = p => (p.categoria === "canteiro" || /CANTEIRO/i.test(p.nome)) ? 0 : 1;
+  lista.sort((a, b) => peso(a) - peso(b));
+  return lista.slice(0, limite);
 }
-function montarPrancha(mapCv, titulo, subtitulo, logo){
+function montarPrancha(mapCv, titulo, subtitulo, logo, coordsProntas){
   const W = mapCv.width, H = mapCv.height;
-  const coords = listaCoordenadasPrancha();
+  const coords = coordsProntas || listaCoordenadasPrancha();
   const coordRowH = 22;
   const coordH = coords.length ? 40 + coords.length * coordRowH + 12 : 0;
   const cv = document.createElement("canvas");
@@ -1400,11 +1418,37 @@ function montarPrancha(mapCv, titulo, subtitulo, logo){
   }
   return cv;
 }
+/* distância pela estrada (OSRM table) do ponto de referência até cada ponto */
+async function calcularKmsPrancha(coords){
+  const refVal = document.getElementById("pr-ref").value;
+  if (!refVal || !coords.length) return coords;
+  const [rlat, rlng] = refVal.split(",").map(Number);
+  try {
+    const str = [`${rlng.toFixed(6)},${rlat.toFixed(6)}`,
+                 ...coords.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`)].join(";");
+    const resp = await Promise.race([
+      fetch(`https://router.project-osrm.org/table/v1/driving/${str}?sources=0&annotations=distance`),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 20000)),
+    ]);
+    const j = await resp.json();
+    if (j.code !== "Ok" || !j.distances) throw new Error(j.message || "sem resposta");
+    const dist = j.distances[0].slice(1);
+    coords.forEach((p, i) => {
+      const m = dist[i];
+      if (!p.km && m != null && m > 30)
+        p.km = (m / 1000).toLocaleString("pt-BR", {maximumFractionDigits:2});
+    });
+  } catch (e) {
+    aviso("Não deu para calcular os KM pela estrada (" + (e.message || e) + ") — a prancha sai sem eles.");
+  }
+  return coords;
+}
 async function gerarPrancha(){
   const bt = document.getElementById("pr-gerar");
   bt.disabled = true; bt.textContent = "Gerando...";
   try {
     await carregarScriptExt("https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js", "htmlToImage");
+    const coordsProntas = await calcularKmsPrancha(listaCoordenadasPrancha());
     const logo = await new Promise(res => {
       const im = new Image();
       im.onload = () => res(im); im.onerror = () => res(null);
@@ -1421,7 +1465,7 @@ async function gerarPrancha(){
     ]);
     const titulo = document.getElementById("pr-titulo").value.trim() || "MAPA DE LOCALIZAÇÃO";
     const sub = document.getElementById("pr-sub").value.trim();
-    const page = montarPrancha(mapCv, titulo, sub, logo);
+    const page = montarPrancha(mapCv, titulo, sub, logo, coordsProntas);
     const nomeArq = (sub || titulo).replace(/[^\w\- À-ÿ]+/g, "").trim().replace(/\s+/g, "_") || "prancha";
     const a = document.createElement("a");
     a.download = nomeArq + ".png";
