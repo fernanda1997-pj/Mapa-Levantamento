@@ -186,6 +186,8 @@
         <summary>✏️ Levantamento (pontos e rotas)</summary>
         <div class="corpo">
           <div id="lista-desenhos"></div>
+          <button class="btn secundario" id="btn-excluir-tudo" style="margin-top:8px; display:none"
+            onclick="excluirTodosDesenhos()">🗑️ Excluir todo o levantamento</button>
           <p class="dica">Use a barra de ferramentas no canto do mapa para desenhar
             <b>pontos</b>, <b>rotas</b> e <b>áreas</b>. Rotas mostram a extensão em km.
             Para editar ou apagar, use os botões de edição da mesma barra.<br>
@@ -1089,10 +1091,24 @@ function salvarDesenhos(){
   renderizarListaDesenhos();
 }
 
+function excluirTodosDesenhos(){
+  const n = Object.keys(camadasDesenho).length;
+  if (!n){ aviso("Não há nada desenhado."); return; }
+  dialogoConfirmar(`Excluir TODOS os ${n} elemento(s) do levantamento (pontos, rotas e áreas)? Não dá para desfazer.`, () => {
+    Object.entries(camadasDesenho).forEach(([id, l]) => {
+      grupoDesenhos.removeLayer(l);
+      removerChao(id);
+      delete camadasDesenho[id];
+    });
+    salvarDesenhos();
+    aviso("Levantamento limpo.");
+  });
+}
 function renderizarListaDesenhos(){
   const lista = document.getElementById("lista-desenhos");
   lista.innerHTML = "";
   const camadas = Object.values(camadasDesenho);
+  document.getElementById("btn-excluir-tudo").style.display = camadas.length ? "" : "none";
   if (!camadas.length){
     lista.innerHTML = `<div class="vazio">Nada desenhado ainda.</div>`;
     return;
