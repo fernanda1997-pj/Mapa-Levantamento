@@ -127,6 +127,14 @@
   .marcador-fixo{display:flex; align-items:center; justify-content:center; border-radius:50% 50% 50% 0;
     transform:rotate(-45deg); border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,.4);}
   .marcador-fixo span{transform:rotate(45deg); font-size:13px;}
+  /* rótulo com halo branco (estilo Google Earth), legível sobre satélite */
+  .leaflet-tooltip.rotulo-halo{
+    background:transparent; border:none; box-shadow:none; padding:0;
+    font-weight:700; font-size:12.5px; color:#111827;
+    text-shadow:-1.5px -1.5px 0 #fff, 1.5px -1.5px 0 #fff, -1.5px 1.5px 0 #fff,
+                 1.5px 1.5px 0 #fff, 0 0 5px #fff;
+  }
+  .leaflet-tooltip.rotulo-halo::before{display:none;}
 </style>
 </head>
 <body>
@@ -475,6 +483,25 @@ const idArq = p => `${p.categoria}|${p.nome}|${p.lat.toFixed(5)},${p.lng.toFixed
 let ocultosArquivo = new Set(carregar("rta_geoportal_fixos_ocultos", []));
 const salvarOcultos = () => salvar("rta_geoportal_fixos_ocultos", [...ocultosArquivo]);
 
+/* rótulos permanentes com halo (nome ao lado do marcador, sai na prancha) */
+let rotulosAtivos = localStorage.getItem("rta_geoportal_rotulos") !== "nao";
+function aplicarRotulo(m, nome, deslocamento){
+  m.unbindTooltip();
+  if (!nome) return;
+  m.bindTooltip(nome, rotulosAtivos
+    ? {permanent:true, direction:"right", offset:deslocamento || [13, -18], className:"rotulo-halo"}
+    : {});
+}
+function alternarRotulos(){
+  rotulosAtivos = !rotulosAtivos;
+  localStorage.setItem("rta_geoportal_rotulos", rotulosAtivos ? "sim" : "nao");
+  renderizarTodosFixos();
+  Object.values(camadasDesenho).forEach(l => {
+    if (l instanceof L.Marker) aplicarRotulo(l, l._nomeRTA || "", [10, 0]);
+  });
+  aviso(rotulosAtivos ? "Nomes visíveis no mapa (saem na prancha)." : "Nomes ocultos.");
+}
+
 /* ocultos dos pontos manuais (por id) */
 let ocultosManuais = new Set(carregar("rta_geoportal_fixos_ocultos_manuais", []));
 const salvarOcultosTudo = () => {
@@ -546,10 +573,10 @@ function renderizarTodosFixos(){
         let m;
         if (e.tipo === "arquivo"){
           m = L.marker([p.lat, p.lng], {icon:iconeFixo(cat)})
-            .bindTooltip(p.nome).bindPopup(() => popupFixoArquivo(p));
+            .bindPopup(() => popupFixoArquivo(p));
         } else {
           m = L.marker([p.lat, p.lng], {icon:iconeFixo(cat), draggable:true})
-            .bindTooltip(p.nome).bindPopup(() => popupFixo(p));
+            .bindPopup(() => popupFixo(p));
           m.on("dragend", () => {
             const ll = m.getLatLng();
             p.lat = ll.lat; p.lng = ll.lng;
@@ -558,6 +585,7 @@ function renderizarTodosFixos(){
           marcadoresFixos[p.id] = m;
         }
         integrarMarcadorRota(m);
+        aplicarRotulo(m, p.nome);
         e.m = m;
         if (!estaOculto(e)) m.addTo(grupo);
       });
@@ -971,6 +999,7 @@ function registrarDesenho(layer, nome){
       html:`<div style="width:16px;height:16px;border-radius:50%;background:${layer._corRTA};border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)"></div>`,
       iconSize:[16,16], iconAnchor:[8,8],
     }));
+    aplicarRotulo(layer, nome, [10, 0]);
   }
   layer.bindPopup(() => popupDesenho(layer));
   layer.on("pm:edit pm:dragend pm:markerdragend", () => {
@@ -1032,6 +1061,7 @@ function renomearDesenho(id){
   dialogoNome("Nome do elemento", l._nomeRTA || "", nome => {
     if (nome) l._nomeRTA = nome;
     l.closePopup();
+    if (l instanceof L.Marker) aplicarRotulo(l, l._nomeRTA || "", [10, 0]);
     salvarDesenhos();
   });
 }
@@ -1745,6 +1775,19 @@ function alternarPainelCoords(){
   painelCoords.addTo(map);
   atualizarPainelCoords();
 }
+const BotaoRotulos = L.Control.extend({
+  options:{position:"topleft"},
+  onAdd(){
+    const d = L.DomUtil.create("div", "leaflet-bar");
+    const a = L.DomUtil.create("a", "", d);
+    a.href = "#"; a.title = "Mostrar/ocultar os nomes dos pontos no mapa"; a.textContent = "🏷️";
+    a.style.fontSize = "15px";
+    L.DomEvent.on(a, "click", ev => { L.DomEvent.stop(ev); alternarRotulos(); });
+    return d;
+  },
+});
+map.addControl(new BotaoRotulos());
+
 const BotaoCoords = L.Control.extend({
   options:{position:"topleft"},
   onAdd(){
