@@ -134,7 +134,8 @@
   <aside id="painel">
     <header>
       <img src="logo/LOGO RTA.png" alt="RTA">
-      <h1>Geoportal RTA<small>Levantamento de Trechos Rodoviários</small></h1>
+      <h1 style="flex:1">Geoportal RTA<small>Levantamento de Trechos Rodoviários</small></h1>
+      <img src="logo/LOGO MSI.jpeg" alt="MSI">
     </header>
     <div class="conteudo">
 
@@ -1308,7 +1309,7 @@ function listaCoordenadasPrancha(limite = 14){
   lista.sort((a, b) => peso(a) - peso(b));
   return lista.slice(0, limite);
 }
-function montarPrancha(mapCv, titulo, subtitulo, logo, coordsProntas){
+function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas){
   const W = mapCv.width, H = mapCv.height;
   const coords = coordsProntas || listaCoordenadasPrancha();
   const coordRowH = 22;
@@ -1324,17 +1325,22 @@ function montarPrancha(mapCv, titulo, subtitulo, logo, coordsProntas){
   const texto = (t, x, y, fonte, cor, alin) => {
     g.font = fonte; g.fillStyle = cor; g.textAlign = alin || "left"; g.fillText(t, x, y); g.textAlign = "left";
   };
-  /* --- título (sup-esq) --- */
+  /* --- título (sup-esq), com as logos RTA e MSI --- */
   g.font = "bold 24px Segoe UI, Arial";
   const tw = g.measureText(titulo).width;
   g.font = "15px Segoe UI, Arial";
   const sw = subtitulo ? g.measureText(subtitulo).width : 0;
-  const logoW = logo ? Math.round(46 * (logo.width / logo.height)) : 0;
-  const tbW = Math.max(tw, sw) + 36 + (logo ? logoW + 16 : 0);
+  const logosOk = (Array.isArray(logos) ? logos : [logos]).filter(Boolean);
+  const logosW = logosOk.map(l => Math.round(46 * (l.width / l.height)));
+  const totalLogos = logosW.reduce((a, b) => a + b, 0) + logosOk.length * 14;
+  const tbW = Math.max(tw, sw) + 36 + totalLogos;
   const tbH = subtitulo ? 78 : 58;
   caixa(14, 14, tbW, tbH);
   let tx = 30;
-  if (logo){ g.drawImage(logo, 28, 14 + (tbH - 46) / 2, logoW, 46); tx = 28 + logoW + 16; }
+  logosOk.forEach((l, i) => {
+    g.drawImage(l, tx - 2, 14 + (tbH - 46) / 2, logosW[i], 46);
+    tx += logosW[i] + 14;
+  });
   texto(titulo, tx, 46, "bold 24px Segoe UI, Arial", "#0f172a");
   if (subtitulo) texto(subtitulo, tx, 68, "15px Segoe UI, Arial", "#334155");
   /* --- legenda (sup-dir) --- */
@@ -1517,11 +1523,12 @@ async function gerarPrancha(){
   try {
     await carregarScriptExt("https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js", "htmlToImage");
     const coordsProntas = await calcularKmsPrancha(listaCoordenadasPrancha());
-    const logo = await new Promise(res => {
+    const carregarImg = src => new Promise(res => {
       const im = new Image();
       im.onload = () => res(im); im.onerror = () => res(null);
-      im.src = "logo/LOGO RTA.png";
+      im.src = src;
     });
+    const logos = await Promise.all([carregarImg("logo/LOGO RTA.png"), carregarImg("logo/LOGO MSI.jpeg")]);
     document.getElementById("modal-prancha").classList.remove("aberto");
     await new Promise(r => setTimeout(r, 120)); // deixa o modal sumir da tela
     const mapCv = await Promise.race([
@@ -1533,7 +1540,7 @@ async function gerarPrancha(){
     ]);
     const titulo = document.getElementById("pr-titulo").value.trim() || "MAPA DE LOCALIZAÇÃO";
     const sub = document.getElementById("pr-sub").value.trim();
-    const page = montarPrancha(mapCv, titulo, sub, logo, coordsProntas);
+    const page = montarPrancha(mapCv, titulo, sub, logos, coordsProntas);
     const nomeArq = (sub || titulo).replace(/[^\w\- À-ÿ]+/g, "").trim().replace(/\s+/g, "_") || "prancha";
     const a = document.createElement("a");
     a.download = nomeArq + ".png";
