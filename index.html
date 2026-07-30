@@ -350,28 +350,73 @@ document.getElementById("bases").addEventListener("change", e => {
 /* ================= Regiões ================= */
 const camadasRegioes = {};
 const listaRegioesEl = document.getElementById("lista-regioes");
+let regioesOcultas;
+try { regioesOcultas = new Set(JSON.parse(localStorage.getItem("rta_geoportal_regioes_ocultas")) || []); }
+catch { regioesOcultas = new Set(); }
+const salvarRegioesOcultas = () =>
+  localStorage.setItem("rta_geoportal_regioes_ocultas", JSON.stringify([...regioesOcultas]));
+
+const cabecalhoRegioes = document.createElement("div");
+cabecalhoRegioes.className = "linha-camada";
+cabecalhoRegioes.style.borderBottom = "1px solid var(--borda)";
+cabecalhoRegioes.innerHTML = `
+  <input type="checkbox" title="Mostrar/ocultar todas de uma vez">
+  <b style="font-size:13px">Todas as regiões</b>`;
+listaRegioesEl.appendChild(cabecalhoRegioes);
+const chkTodasRegioes = cabecalhoRegioes.querySelector("input");
+const chksRegiao = [];
+
+const atualizarChkTodasRegioes = () => {
+  const vis = chksRegiao.filter(c => c.checked).length;
+  chkTodasRegioes.checked = vis === chksRegiao.length;
+  chkTodasRegioes.indeterminate = vis > 0 && vis < chksRegiao.length;
+};
+
 DADOS_REGIOES.features.forEach(f => {
   const num = f.properties.REGIAO;
   const cor = CORES_REGIOES[num] || "#94A3B8";
-  const nome = (f.properties.NOMEREG || ("Região " + num))
-                 .replace(/^REGIÃO/i, "Região");
+  let nome = (f.properties.NOMEREG || ("Região " + num))
+               .replace(/^REGIÃO/i, "Região");
+  if (num === 1 && !nome.includes("-")) nome += " - TOCANTINÓPOLIS";
   const camada = L.geoJSON(f, {
     style:{color:cor, weight:2.5, fillColor:cor, fillOpacity:0.10},
-  }).bindTooltip(nome, {sticky:true}).addTo(map);
+  }).bindTooltip(nome, {sticky:true});
+  if (!regioesOcultas.has(num)) camada.addTo(map);
   camadasRegioes[num] = camada;
 
   const linha = document.createElement("div");
   linha.className = "linha-camada";
   linha.innerHTML = `
-    <input type="checkbox" checked>
+    <input type="checkbox">
     <span class="chip" style="background:${cor}"></span>
     <span class="nome" title="Aproximar">${nome}</span>`;
-  linha.querySelector("input").addEventListener("change", ev =>
-    ev.target.checked ? camada.addTo(map) : map.removeLayer(camada));
-  linha.querySelector(".nome").addEventListener("click", () =>
-    map.fitBounds(camada.getBounds(), {padding:[30,30]}));
+  const chk = linha.querySelector("input");
+  chk.checked = !regioesOcultas.has(num);
+  chksRegiao.push(chk);
+  chk.addEventListener("change", () => {
+    if (chk.checked){ regioesOcultas.delete(num); camada.addTo(map); }
+    else { regioesOcultas.add(num); map.removeLayer(camada); }
+    salvarRegioesOcultas();
+    atualizarChkTodasRegioes();
+  });
+  linha.querySelector(".nome").addEventListener("click", () => {
+    if (!chk.checked){ chk.checked = true; chk.dispatchEvent(new Event("change")); }
+    map.fitBounds(camada.getBounds(), {padding:[30,30]});
+  });
   listaRegioesEl.appendChild(linha);
 });
+chkTodasRegioes.addEventListener("change", () => {
+  const alvo = chkTodasRegioes.checked; // fixa o alvo antes: os updates mexem no master
+  chksRegiao.forEach(chk => {
+    if (chk.checked !== alvo){
+      chk.checked = alvo;
+      chk.dispatchEvent(new Event("change"));
+    }
+  });
+  chkTodasRegioes.checked = alvo;
+  chkTodasRegioes.indeterminate = false;
+});
+atualizarChkTodasRegioes();
 
 /* ================= Utilidades ================= */
 const salvar = (chave, valor) => {
