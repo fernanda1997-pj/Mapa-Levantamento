@@ -808,6 +808,45 @@ const camadasDesenho = {}; // id -> layer
 /* cada desenho ganha uma cor própria (aparece igual na legenda da prancha) */
 const CORES_DESENHO = ["#DC2626", "#2563EB", "#F97316", "#059669", "#7C3AED", "#0EA5E9", "#CA8A04", "#DB2777"];
 
+/* ---- pavimento (asfalto x estrada de chão) via Valhalla/OpenStreetMap ---- */
+const SUPERFICIES_CHAO = new Set(["compacted", "dirt", "gravel", "path", "impassable"]);
+async function analisarPavimento(layer){
+  const lls = layer.getLatLngs();
+  const pts = Array.isArray(lls[0]) ? lls.flat() : lls;
+  const passo = Math.max(1, Math.ceil(pts.length / 700));
+  const shape = pts.filter((_, i) => i % passo === 0 || i === pts.length - 1)
+                   .map(p => ({lat: +p.lat.toFixed(6), lon: +p.lng.toFixed(6)}));
+  const corpo = {shape, costing:"auto", shape_match:"map_snap",
+                 filters:{attributes:["edge.surface", "edge.length"], action:"include"}};
+  const resp = await Promise.race([
+    fetch("https://valhalla1.openstreetmap.de/trace_attributes",
+          {method:"POST", body:JSON.stringify(corpo)}),
+    new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 25000)),
+  ]);
+  const j = await resp.json();
+  if (!j.edges || !j.edges.length) throw new Error((j.error || "sem dados de pavimento"));
+  let pav = 0, chao = 0;
+  j.edges.forEach(e => {
+    const m = (e.length || 0) * 1000;
+    if (SUPERFICIES_CHAO.has(e.surface)) chao += m; else pav += m;
+  });
+  layer._pavRTA = {pav: Math.round(pav), chao: Math.round(chao)};
+  salvarDesenhos();
+  return layer._pavRTA;
+}
+async function analisarPavimentoDesenho(id){
+  const l = camadasDesenho[id];
+  if (!l) return;
+  aviso("Analisando o pavimento da rota...");
+  try {
+    const r = await analisarPavimento(l);
+    l.closePopup();
+    aviso(`${l._nomeRTA || "Rota"}: ${fmtDist(r.pav)} pavimentado · ${fmtDist(r.chao)} em estrada de chão.`);
+  } catch (e) {
+    aviso("Não foi possível analisar o pavimento (" + (e.message || e) + ").");
+  }
+}
+
 function infoGeom(layer){
   if (layer instanceof L.Marker) return {tipo:"Ponto", medida:""};
   if (layer instanceof L.Polygon){
@@ -824,9 +863,13 @@ function infoGeom(layer){
 function popupDesenho(layer){
   const nome = layer._nomeRTA || "(sem nome)";
   const {tipo, medida} = infoGeom(layer);
+  const pav = layer._pavRTA;
+  const ehLinha = !(layer instanceof L.Marker);
   return `<div class="pop-titulo">${esc(nome)}</div>
     <div class="pop-info">${tipo}${medida ? " · " + medida : ""}</div>
+    ${pav ? `<div class="pop-info">🛣️ Pavimentado: ${fmtDist(pav.pav)} · 🟤 Estrada de chão: ${fmtDist(pav.chao)}</div>` : ""}
     <div class="pop-acoes">
+      ${ehLinha && !pav ? `<button onclick="analisarPavimentoDesenho('${layer._idRTA}')">🛞 Pavimento</button>` : ""}
       <button onclick="renomearDesenho('${layer._idRTA}')">✏️ Renomear</button>
       <button onclick="excluirDesenho('${layer._idRTA}')">🗑️ Excluir</button>
     </div>`;
@@ -865,7 +908,7 @@ function salvarDesenhos(){
   Object.values(camadasDesenho).forEach(l => {
     const f = l.toGeoJSON();
     f.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "",
-                    legs:l._legsRTA || null, origem:"levantamento"};
+                    legs:l._legsRTA || null, pav:l._pavRTA || null, origem:"levantamento"};
     fc.features.push(f);
   });
   salvar(CHAVE_DESENHOS, fc);
@@ -939,6 +982,7 @@ function carregarDesenhos(){
         layer._idRTA = feat.properties?.id || novoId();
         if (feat.properties?.cor) layer._corRTA = feat.properties.cor;
         if (feat.properties?.legs) layer._legsRTA = feat.properties.legs;
+        if (feat.properties?.pav) layer._pavRTA = feat.properties.pav;
         registrarDesenho(layer, feat.properties?.nome || "");
       },
     });
@@ -1201,6 +1245,7 @@ function concluirRotaEstrada(){
     if (nome) linha._nomeRTA = nome;
     salvarDesenhos();
   });
+  analisarPavimento(linha).catch(() => {}); // asfalto x chão, preenchido em segundo plano
 }
 function encerrarRotaEstrada(){
   rotaAtiva = false;
@@ -1298,6 +1343,9 @@ async function inserirMediaKm(){
     if (!totalM){ aviso("A rota não tem extensão."); return; }
     const fmtN = m => (m / 1000).toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2});
     anexar(`${(l._nomeRTA || "ROTA").toUpperCase()}: ${fmtN(totalM)}/2 = ${fmtN(totalM / 2)} KM`);
+    if (l._pavRTA && l._pavRTA.chao > 30){
+      anexar(`(sendo ${fmtN(l._pavRTA.chao)} km em estrada de chão e ${fmtN(l._pavRTA.pav)} km pavimentado)`);
+    }
     return;
   }
   aviso("Calculando as distâncias pela estrada...");
