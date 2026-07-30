@@ -1445,7 +1445,11 @@ function itensLegendaPrancha(){
     } else if (l.getBounds && vb.intersects(l.getBounds())){
       const {medida} = infoGeom(l);
       itens.push({tipo:"linha", cor, rot:nome + (medida ? ` · ${medida}` : "")});
-      if (l._pavRTA && l._pavRTA.chao > 30 && l._pavRTA.segs?.length) temChao = true;
+      if (l._pavRTA && l._pavRTA.chao > 30){
+        itens.push({tipo:"sub", cor:"#64748B",
+                    rot:`asfalto ${fmtDist(l._pavRTA.pav)} · estrada de chão ${fmtDist(l._pavRTA.chao)}`});
+        if (l._pavRTA.segs?.length) temChao = true;
+      }
     }
   });
   if (temChao) itens.push({tipo:"tracejada", cor:"#7C4A03", rot:"Estrada de chão"});
@@ -1529,21 +1533,28 @@ function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas, memoria){
   texto(titulo, tx, 46, "bold 24px Segoe UI, Arial", "#0f172a");
   if (subtitulo) texto(subtitulo, tx, 68, "15px Segoe UI, Arial", "#334155");
   /* --- legenda (sup-dir) --- */
-  const itens = itensLegendaPrancha().slice(0, 14);
-  const rowH = 24, legFS = 13;
+  const itens = itensLegendaPrancha().slice(0, 18);
+  const legFS = 13;
+  const altItem = it => it.tipo === "sub" ? 18 : 24;
   g.font = legFS + "px Segoe UI, Arial";
   let maxW = g.measureText("Legenda").width;
   itens.forEach(it => maxW = Math.max(maxW, g.measureText(it.rot).width));
   const lw = Math.min(maxW + 72, Math.round(W * .4));
-  const lh = 40 + Math.max(itens.length, 1) * rowH + 6;
+  const lh = 40 + (itens.length ? itens.reduce((a, it) => a + altItem(it), 0) : 24) + 6;
   const lx = W - lw - 14, ly = 14;
   caixa(lx, ly, lw, lh);
   texto("Legenda", lx + 14, ly + 24, "bold 15px Segoe UI, Arial", "#0f172a");
   g.strokeStyle = "#cbd5e1"; g.lineWidth = 1;
   g.beginPath(); g.moveTo(lx + 12, ly + 32); g.lineTo(lx + lw - 12, ly + 32); g.stroke();
   if (!itens.length) texto("(nada visível na área)", lx + 14, ly + 52, "12px Segoe UI, Arial", "#94a3b8");
-  itens.forEach((it, i) => {
-    const sx = lx + 16, sy = ly + 44 + i * rowH + rowH * .4;
+  let yAcc = ly + 44;
+  itens.forEach(it => {
+    const h = altItem(it), sx = lx + 16, sy = yAcc + h * .4;
+    if (it.tipo === "sub"){
+      texto(it.rot, sx + 40, sy + 11 * .35, "italic 11.5px Segoe UI, Arial", it.cor || "#64748B");
+      yAcc += h;
+      return;
+    }
     g.strokeStyle = it.cor; g.fillStyle = it.cor;
     if (it.tipo === "linha"){
       g.lineWidth = 5; g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx + 28, sy); g.stroke();
@@ -1556,6 +1567,7 @@ function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas, memoria){
       g.strokeStyle = "#fff"; g.lineWidth = 1.6; g.stroke();
     }
     texto(it.rot, sx + 40, sy + legFS * .35, legFS + "px Segoe UI, Arial", "#1e293b");
+    yAcc += h;
   });
   /* --- escala + norte (inf-dir) --- */
   const mpp = 40075016.686 * Math.abs(Math.cos(map.getCenter().lat * Math.PI / 180)) / (256 * Math.pow(2, map.getZoom()));
