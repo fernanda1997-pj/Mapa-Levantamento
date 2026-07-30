@@ -224,6 +224,10 @@
     <input type="text" id="pr-sub" maxlength="80" placeholder="Ex.: TO - 280">
     <label>Calcular KM pela estrada a partir de</label>
     <select id="pr-ref"></select>
+    <label>Memória de cálculo (opcional — sai num quadro ao lado das coordenadas)</label>
+    <textarea id="pr-memoria" style="min-height:84px"
+      placeholder="Ex.: DMT areal-canteiro: 12,26 km&#10;Média das distâncias: ...&#10;Observações..."></textarea>
+    <button class="btn secundario" style="margin-top:6px" onclick="inserirMediaKm()">➕ Inserir média dos KM</button>
     <p class="dica" style="margin-top:10px">Os KM do bloco COORDENADAS são calculados
       automaticamente pela estrada, do ponto de referência (normalmente o canteiro) até cada ponto.
       KM digitado à mão no cadastro do ponto tem prioridade.<br>
@@ -1250,7 +1254,20 @@ function abrirModalPrancha(){
   });
   const canteiro = [...sel.options].find(o => /CANTEIRO/i.test(o.textContent));
   if (canteiro) sel.value = canteiro.value;
+  document.getElementById("pr-memoria").value = carregar("rta_geoportal_memoria", "");
   document.getElementById("modal-prancha").classList.add("aberto");
+}
+async function inserirMediaKm(){
+  aviso("Calculando as distâncias pela estrada...");
+  const coords = await calcularKmsPrancha(listaCoordenadasPrancha());
+  const kms = coords.map(p => parseFloat(String(p.km).replace(/\./g, "").replace(",", ".")))
+                    .filter(v => !isNaN(v) && v > 0);
+  if (!kms.length){ aviso("Nenhum KM disponível para tirar a média (escolha a referência)."); return; }
+  const media = kms.reduce((a, b) => a + b, 0) / kms.length;
+  const linha = `Média das distâncias (${kms.length} ponto${kms.length > 1 ? "s" : ""}): ` +
+    media.toLocaleString("pt-BR", {maximumFractionDigits:2}) + " km";
+  const ta = document.getElementById("pr-memoria");
+  ta.value = (ta.value.trim() ? ta.value.trimEnd() + "\n" : "") + linha;
 }
 function itensLegendaPrancha(){
   const itens = [], vb = map.getBounds();
@@ -1309,11 +1326,31 @@ function listaCoordenadasPrancha(limite = 14){
   lista.sort((a, b) => peso(a) - peso(b));
   return lista.slice(0, limite);
 }
-function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas){
+function quebrarLinhas(ctx, texto, maxW){
+  const saida = [];
+  texto.split("\n").forEach(par => {
+    let atual = "";
+    par.split(" ").forEach(palavra => {
+      const tentativa = atual ? atual + " " + palavra : palavra;
+      if (ctx.measureText(tentativa).width > maxW && atual){ saida.push(atual); atual = palavra; }
+      else atual = tentativa;
+    });
+    saida.push(atual);
+  });
+  return saida;
+}
+function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas, memoria){
   const W = mapCv.width, H = mapCv.height;
   const coords = coordsProntas || listaCoordenadasPrancha();
   const coordRowH = 22;
-  const coordH = coords.length ? 40 + coords.length * coordRowH + 12 : 0;
+  const medidor = document.createElement("canvas").getContext("2d");
+  medidor.font = "13px Segoe UI, Arial";
+  const temMemoria = !!(memoria && memoria.trim());
+  const memX = Math.round(W * 0.62);
+  const memLinhas = temMemoria ? quebrarLinhas(medidor, memoria.trim(), W - memX - 40) : [];
+  const altCoords = coords.length ? 40 + coords.length * coordRowH + 12 : 0;
+  const altMem = memLinhas.length ? 40 + memLinhas.length * coordRowH + 12 : 0;
+  const coordH = Math.max(altCoords, altMem);
   const cv = document.createElement("canvas");
   cv.width = W; cv.height = H + coordH;
   const g = cv.getContext("2d");
@@ -1408,19 +1445,29 @@ function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas){
   const rw = g.measureText(rod).width + 24;
   caixa(14, H - 40, rw, 26);
   texto(rod, 26, H - 22, "11px Segoe UI, Arial", "#334155");
-  /* --- bloco COORDENADAS (abaixo do mapa) --- */
-  if (coords.length){
+  /* --- bloco COORDENADAS + MEMÓRIA DE CÁLCULO (abaixo do mapa) --- */
+  if (coordH){
+    const fimCoords = temMemoria ? memX - 30 : W - 20;
     g.fillStyle = "#ffffff"; g.fillRect(0, H, W, coordH);
     g.strokeStyle = "#0f172a"; g.lineWidth = 1.5;
     g.beginPath(); g.moveTo(0, H + .5); g.lineTo(W, H + .5); g.stroke();
-    texto("COORDENADAS:", 24, H + 28, "bold 15px Segoe UI, Arial", "#0f172a");
-    coords.forEach((p, i) => {
-      const y = H + 40 + i * coordRowH + coordRowH * .55;
-      const linha = `${p.nome} (${p.lat.toFixed(6)}°, ${p.lng.toFixed(6)}°)${p.km ? ` - KM ${p.km}` : ""}`;
-      texto(linha, 24, y, "13px Segoe UI, Arial", "#1e293b");
-      g.strokeStyle = "#e2e8f0"; g.lineWidth = 1;
-      g.beginPath(); g.moveTo(20, y + 7); g.lineTo(W - 20, y + 7); g.stroke();
-    });
+    if (coords.length){
+      texto("COORDENADAS:", 24, H + 28, "bold 15px Segoe UI, Arial", "#0f172a");
+      coords.forEach((p, i) => {
+        const y = H + 40 + i * coordRowH + coordRowH * .55;
+        texto(linhaCoordenada(p), 24, y, "13px Segoe UI, Arial", "#1e293b");
+        g.strokeStyle = "#e2e8f0"; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(20, y + 7); g.lineTo(fimCoords, y + 7); g.stroke();
+      });
+    }
+    if (temMemoria){
+      g.strokeStyle = "#cbd5e1"; g.lineWidth = 1.5;
+      g.beginPath(); g.moveTo(memX - 22, H + 12); g.lineTo(memX - 22, H + coordH - 12); g.stroke();
+      texto("MEMÓRIA DE CÁLCULO:", memX, H + 28, "bold 15px Segoe UI, Arial", "#0f172a");
+      memLinhas.forEach((ln, i) => {
+        texto(ln, memX, H + 40 + i * coordRowH + coordRowH * .55, "13px Segoe UI, Arial", "#1e293b");
+      });
+    }
   }
   return cv;
 }
@@ -1540,7 +1587,9 @@ async function gerarPrancha(){
     ]);
     const titulo = document.getElementById("pr-titulo").value.trim() || "MAPA DE LOCALIZAÇÃO";
     const sub = document.getElementById("pr-sub").value.trim();
-    const page = montarPrancha(mapCv, titulo, sub, logos, coordsProntas);
+    const memoria = document.getElementById("pr-memoria").value;
+    salvar("rta_geoportal_memoria", memoria);
+    const page = montarPrancha(mapCv, titulo, sub, logos, coordsProntas, memoria);
     const nomeArq = (sub || titulo).replace(/[^\w\- À-ÿ]+/g, "").trim().replace(/\s+/g, "_") || "prancha";
     const a = document.createElement("a");
     a.download = nomeArq + ".png";
