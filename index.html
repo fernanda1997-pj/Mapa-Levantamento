@@ -35,6 +35,12 @@
     user-select:none; display:flex; align-items:center; gap:8px;
   }
   details.secao summary::marker{color:var(--cinza);}
+  .seta-grupo{display:inline-block; transition:transform .15s; font-size:10px; color:var(--cinza); width:10px;}
+  details[open] > summary .seta-grupo{transform:rotate(90deg);}
+  .busca-grupo{
+    width:100%; padding:5px 8px; margin:4px 0 2px; border:1px solid var(--borda);
+    border-radius:6px; font-size:12px; font-family:inherit;
+  }
   details.secao .corpo{padding:4px 12px 12px;}
 
   .linha-camada{display:flex; align-items:center; gap:8px; padding:5px 2px; font-size:13px;}
@@ -645,6 +651,7 @@ function renderizarTodosFixos(){
       const det = document.createElement("details");
       det.innerHTML = `
         <summary class="linha-camada" style="cursor:pointer; list-style:none">
+          <span class="seta-grupo">▶</span>
           <input type="checkbox" title="Mostrar/ocultar todos">
           <span style="font-size:14px">${c.icone}</span>
           <b style="font-size:13px">${c.plural} (<span class="qt-vis"></span>/${entradas.length})</b>
@@ -670,7 +677,22 @@ function renderizarTodosFixos(){
       });
 
       const corpo = document.createElement("div");
-      corpo.style.cssText = "max-height:190px; overflow-y:auto; margin-left:10px";
+      corpo.style.cssText = "max-height:220px; overflow-y:auto; margin-left:10px";
+      const linhasBusca = [];
+      if (entradas.length >= 6){
+        const busca = document.createElement("input");
+        busca.type = "text";
+        busca.className = "busca-grupo";
+        busca.placeholder = `🔍 Buscar em ${c.plural.toLowerCase()}...`;
+        const norm = s => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+        busca.addEventListener("input", () => {
+          const termo = norm(busca.value.trim());
+          linhasBusca.forEach(r => {
+            r.linha.style.display = !termo || norm(r.nome).includes(termo) ? "" : "none";
+          });
+        });
+        corpo.appendChild(busca);
+      }
       entradas.slice().sort((a, b) => a.p.nome.localeCompare(b.p.nome, "pt")).forEach(e => {
         const p = e.p;
         const linha = document.createElement("div");
@@ -703,6 +725,7 @@ function renderizarTodosFixos(){
           map.setView([p.lat, p.lng], Math.max(map.getZoom(), 13));
           e.m.openPopup();
         });
+        linhasBusca.push({linha, nome: p.nome});
         corpo.appendChild(linha);
       });
       atualizarCabecalho();
