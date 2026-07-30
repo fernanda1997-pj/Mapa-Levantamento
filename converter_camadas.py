@@ -144,6 +144,27 @@ for p in fixos:
         unicos.append(p)
 fixos = unicos
 
+# cidades da base IBGE (BCLocalidadePonto250), se o shapefile estiver na pasta
+shp_cid = CAMADAS / "BCLocalidadePonto250_GCS.shp"
+if shp_cid.exists():
+    cid = gpd.read_file(shp_cid).to_crs(epsg=4326)
+    cid = cid[cid["TIP_LOCALI"].isin([6, 8])]  # 6 = capital, 8 = cidade
+    n_cid = 0
+    for _, r in cid.iterrows():
+        nome = str(r["NM_IDENTIF"]).strip()
+        if not nome or nome.lower() == "nan":
+            continue
+        uf = str(r.get("NM_UF") or "").strip()
+        if uf and uf != "TO":
+            nome = f"{nome} ({uf})"
+        fixos.append({
+            "nome": nome, "categoria": "cidade", "descricao": "",
+            "lat": round(r.geometry.y, 6), "lng": round(r.geometry.x, 6),
+            "arquivo": shp_cid.name,
+        })
+        n_cid += 1
+    print(f"{shp_cid.name}: {n_cid} cidade(s)")
+
 (DADOS / "pontos_fixos.js").write_text(
     "const DADOS_PONTOS_FIXOS = " + json.dumps(fixos, ensure_ascii=False) + ";\n",
     encoding="utf-8")
