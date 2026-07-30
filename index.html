@@ -1288,24 +1288,16 @@ async function inserirMediaKm(){
   if (idRota){
     const l = camadasDesenho[idRota];
     if (!l){ aviso("Rota não encontrada."); return; }
-    let segmentos;
+    let totalM;
     if (l._legsRTA && l._legsRTA.length){
-      segmentos = l._legsRTA; // pernas reais pela estrada (entre os pontos clicados)
+      totalM = l._legsRTA.reduce((a, b) => a + b, 0); // extensão real pela estrada
     } else {
       const lls = l.getLatLngs();
-      const pts = Array.isArray(lls[0]) ? lls.flat() : lls;
-      if (pts.length > 30){
-        // rota pela estrada antiga (geometria densa, sem pernas salvas): trata como 1 segmento
-        segmentos = [distanciaMetros(pts)];
-      } else {
-        segmentos = [];
-        for (let i = 1; i < pts.length; i++) segmentos.push(map.distance(pts[i-1], pts[i]));
-      }
+      totalM = distanciaMetros(Array.isArray(lls[0]) ? lls.flat() : lls);
     }
-    if (!segmentos.length){ aviso("A rota não tem segmentos."); return; }
-    const media = segmentos.reduce((a, b) => a + b, 0) / segmentos.length;
-    anexar(`Média dos segmentos — ${l._nomeRTA || "rota"}: ${fmtKmBr(media)} ` +
-           `(${segmentos.length} trecho${segmentos.length > 1 ? "s" : ""}, total ${fmtKmBr(segmentos.reduce((a,b)=>a+b,0))})`);
+    if (!totalM){ aviso("A rota não tem extensão."); return; }
+    const fmtN = m => (m / 1000).toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2});
+    anexar(`${(l._nomeRTA || "ROTA").toUpperCase()}: ${fmtN(totalM)}/2 = ${fmtN(totalM / 2)} KM`);
     return;
   }
   aviso("Calculando as distâncias pela estrada...");
