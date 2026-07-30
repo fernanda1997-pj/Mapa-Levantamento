@@ -339,6 +339,10 @@ const bases = {
       {maxZoom:19, attribution:"© CARTO"}),
 };
 const map = L.map("map", {zoomControl:true, layers:[bases.osm]});
+/* Geoman em modo opt-in: só os desenhos do levantamento são editáveis —
+   evita o modo de edição criar milhares de vértices nas regiões/rotas densas
+   e congelar o navegador */
+L.PM.setOptIn(true);
 map.fitBounds([[-13.47, -50.75], [-5.16, -46.08]]);
 L.control.scale({imperial:false, position:"bottomleft"}).addTo(map);
 
@@ -1032,6 +1036,18 @@ function registrarDesenho(layer, nome){
   if (!layer._corRTA){
     const usados = Object.keys(camadasDesenho).filter(k => k !== id).length;
     layer._corRTA = CORES_DESENHO[usados % CORES_DESENHO.length];
+  }
+  /* com o Geoman em opt-in, habilita a edição apenas nos desenhos leves;
+     rotas pela estrada (milhares de vértices) ficam de fora para não travar */
+  let editavel = layer instanceof L.Marker;
+  if (!editavel && layer.getLatLngs){
+    const lls = layer.getLatLngs();
+    const nPts = (Array.isArray(lls[0]) ? lls.flat() : lls).length;
+    editavel = nPts <= 400;
+  }
+  if (editavel && !layer.pm){
+    layer.options.pmIgnore = false;
+    L.PM.reInitLayer(layer);
   }
   camadasDesenho[id] = layer;
   layer.addTo(grupoDesenhos);
