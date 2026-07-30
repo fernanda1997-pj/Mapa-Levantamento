@@ -810,6 +810,33 @@ const CORES_DESENHO = ["#DC2626", "#2563EB", "#F97316", "#059669", "#7C3AED", "#
 
 /* ---- pavimento (asfalto x estrada de chão) via Valhalla/OpenStreetMap ---- */
 const SUPERFICIES_CHAO = new Set(["compacted", "dirt", "gravel", "path", "impassable"]);
+const overlaysChao = {}; // id do desenho -> layerGroup tracejado marrom
+
+function decodificarPolyline6(str){
+  let idx = 0, lat = 0, lng = 0;
+  const pts = [];
+  while (idx < str.length){
+    let b, shift = 0, res = 0;
+    do { b = str.charCodeAt(idx++) - 63; res |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lat += (res & 1) ? ~(res >> 1) : (res >> 1);
+    shift = 0; res = 0;
+    do { b = str.charCodeAt(idx++) - 63; res |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lng += (res & 1) ? ~(res >> 1) : (res >> 1);
+    pts.push([lat / 1e6, lng / 1e6]);
+  }
+  return pts;
+}
+function removerChao(id){
+  if (overlaysChao[id]){ map.removeLayer(overlaysChao[id]); delete overlaysChao[id]; }
+}
+function renderizarChao(layer){
+  removerChao(layer._idRTA);
+  const segs = layer._pavRTA?.segs;
+  if (!segs || !segs.length) return;
+  overlaysChao[layer._idRTA] = L.layerGroup(segs.map(s =>
+    L.polyline(s, {color:"#7C4A03", weight:5, dashArray:"7,7", opacity:.95, interactive:false})
+  )).addTo(map);
+}
 async function analisarPavimento(layer){
   const lls = layer.getLatLngs();
   const pts = Array.isArray(lls[0]) ? lls.flat() : lls;
@@ -817,7 +844,9 @@ async function analisarPavimento(layer){
   const shape = pts.filter((_, i) => i % passo === 0 || i === pts.length - 1)
                    .map(p => ({lat: +p.lat.toFixed(6), lon: +p.lng.toFixed(6)}));
   const corpo = {shape, costing:"auto", shape_match:"map_snap",
-                 filters:{attributes:["edge.surface", "edge.length"], action:"include"}};
+                 filters:{attributes:["edge.surface", "edge.length",
+                                      "edge.begin_shape_index", "edge.end_shape_index", "shape"],
+                          action:"include"}};
   const resp = await Promise.race([
     fetch("https://valhalla1.openstreetmap.de/trace_attributes",
           {method:"POST", body:JSON.stringify(corpo)}),
@@ -825,12 +854,31 @@ async function analisarPavimento(layer){
   ]);
   const j = await resp.json();
   if (!j.edges || !j.edges.length) throw new Error((j.error || "sem dados de pavimento"));
+  const forma = j.shape ? decodificarPolyline6(j.shape) : null;
   let pav = 0, chao = 0;
+  const segs = [];
   j.edges.forEach(e => {
     const m = (e.length || 0) * 1000;
-    if (SUPERFICIES_CHAO.has(e.surface)) chao += m; else pav += m;
+    if (SUPERFICIES_CHAO.has(e.surface)){
+      chao += m;
+      if (forma && e.begin_shape_index != null && e.end_shape_index > e.begin_shape_index){
+        const trecho = forma.slice(e.begin_shape_index, e.end_shape_index + 1)
+                            .map(c => [+c[0].toFixed(5), +c[1].toFixed(5)]);
+        const anterior = segs[segs.length - 1];
+        // emenda trechos de chão consecutivos num segmento só
+        if (anterior && anterior[anterior.length - 1][0] === trecho[0][0]
+                     && anterior[anterior.length - 1][1] === trecho[0][1]){
+          anterior.push(...trecho.slice(1));
+        } else {
+          segs.push(trecho);
+        }
+      }
+    } else {
+      pav += m;
+    }
   });
-  layer._pavRTA = {pav: Math.round(pav), chao: Math.round(chao)};
+  layer._pavRTA = {pav: Math.round(pav), chao: Math.round(chao), segs};
+  renderizarChao(layer);
   salvarDesenhos();
   return layer._pavRTA;
 }
@@ -896,9 +944,16 @@ function registrarDesenho(layer, nome){
     }));
   }
   layer.bindPopup(() => popupDesenho(layer));
-  layer.on("pm:edit pm:dragend pm:markerdragend", salvarDesenhos);
+  layer.on("pm:edit pm:dragend pm:markerdragend", () => {
+    if (!(layer instanceof L.Marker) && layer._pavRTA){
+      layer._pavRTA = null; // geometria mudou: análise de pavimento fica desatualizada
+      removerChao(id);
+    }
+    salvarDesenhos();
+  });
   layer.on("pm:remove", () => {
     delete camadasDesenho[id];
+    removerChao(id);
     salvarDesenhos();
   });
 }
@@ -957,6 +1012,7 @@ function excluirDesenho(id){
   dialogoConfirmar(`Excluir “${l._nomeRTA || "elemento sem nome"}”?`, () => {
     grupoDesenhos.removeLayer(l);
     delete camadasDesenho[id];
+    removerChao(id);
     salvarDesenhos();
   });
 }
@@ -984,6 +1040,7 @@ function carregarDesenhos(){
         if (feat.properties?.legs) layer._legsRTA = feat.properties.legs;
         if (feat.properties?.pav) layer._pavRTA = feat.properties.pav;
         registrarDesenho(layer, feat.properties?.nome || "");
+        if (layer._pavRTA) renderizarChao(layer);
       },
     });
   });
@@ -1379,6 +1436,7 @@ function itensLegendaPrancha(){
     if (map.hasLayer(o.linha) && vb.intersects(o.linha.getBounds()))
       itens.push({tipo:"linha", cor:o.cor, rot:`${nome} · ${o.km}`});
   });
+  let temChao = false;
   Object.values(camadasDesenho).forEach(l => {
     const cor = l._corRTA || "#DC2626";
     const nome = l._nomeRTA || "(sem nome)";
@@ -1387,8 +1445,10 @@ function itensLegendaPrancha(){
     } else if (l.getBounds && vb.intersects(l.getBounds())){
       const {medida} = infoGeom(l);
       itens.push({tipo:"linha", cor, rot:nome + (medida ? ` · ${medida}` : "")});
+      if (l._pavRTA && l._pavRTA.chao > 30 && l._pavRTA.segs?.length) temChao = true;
     }
   });
+  if (temChao) itens.push({tipo:"tracejada", cor:"#7C4A03", rot:"Estrada de chão"});
   return itens;
 }
 /* pontos (com nome/coords/km) que entram no bloco COORDENADAS da prancha;
@@ -1487,6 +1547,10 @@ function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas, memoria){
     g.strokeStyle = it.cor; g.fillStyle = it.cor;
     if (it.tipo === "linha"){
       g.lineWidth = 5; g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx + 28, sy); g.stroke();
+    } else if (it.tipo === "tracejada"){
+      g.lineWidth = 4; g.setLineDash([6, 5]);
+      g.beginPath(); g.moveTo(sx, sy); g.lineTo(sx + 28, sy); g.stroke();
+      g.setLineDash([]);
     } else {
       g.beginPath(); g.arc(sx + 14, sy, 6.5, 0, 7); g.fill();
       g.strokeStyle = "#fff"; g.lineWidth = 1.6; g.stroke();
