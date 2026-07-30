@@ -17,7 +17,9 @@ DADOS.mkdir(exist_ok=True)
 regioes = []
 for shp in sorted(CAMADAS.glob("*.shp")):
     m = re.match(r"R(\d+)_", shp.stem)
-    num = int(m.group(1)) if m else 0
+    if not m:
+        continue  # só os R<num>_REGIÃO são regiões; outros shapefiles têm uso próprio
+    num = int(m.group(1))
     gdf = gpd.read_file(shp).to_crs(epsg=4326)
     gdf["REGIAO"] = num
     regioes.append(gdf)
