@@ -475,100 +475,162 @@ const idArq = p => `${p.categoria}|${p.nome}|${p.lat.toFixed(5)},${p.lng.toFixed
 let ocultosArquivo = new Set(carregar("rta_geoportal_fixos_ocultos", []));
 const salvarOcultos = () => salvar("rta_geoportal_fixos_ocultos", [...ocultosArquivo]);
 
+/* ocultos dos pontos manuais (por id) */
+let ocultosManuais = new Set(carregar("rta_geoportal_fixos_ocultos_manuais", []));
+const salvarOcultosTudo = () => {
+  salvarOcultos();
+  salvar("rta_geoportal_fixos_ocultos_manuais", [...ocultosManuais]);
+};
+
 /* deixa visível só o ponto indicado (esconde os demais da mesma categoria) */
+function soEsteFixo(categoria, chaveAlvo){
+  fixosArquivo.forEach(p => {
+    if (p.categoria !== categoria) return;
+    const id = idArq(p);
+    if (id === chaveAlvo) ocultosArquivo.delete(id); else ocultosArquivo.add(id);
+  });
+  pontosFixos.forEach(p => {
+    if (p.categoria !== categoria) return;
+    if (p.id === chaveAlvo) ocultosManuais.delete(p.id); else ocultosManuais.add(p.id);
+  });
+  salvarOcultosTudo();
+  map.closePopup();
+  renderizarTodosFixos();
+  aviso("Mostrando apenas o ponto escolhido. Use a caixa do grupo para reexibir todos.");
+}
 function soEsteArquivo(idCod){
   const id = decodeURIComponent(idCod);
   const alvo = fixosArquivo.find(p => idArq(p) === id);
-  if (!alvo) return;
-  fixosArquivo.forEach(p => {
-    if (p.categoria !== alvo.categoria) return;
-    if (idArq(p) === id) ocultosArquivo.delete(idArq(p));
-    else ocultosArquivo.add(idArq(p));
-  });
-  salvarOcultos();
-  map.closePopup();
-  renderizarFixosArquivo();
-  aviso(`Mostrando apenas “${alvo.nome}”. Use a caixa do grupo para reexibir todas.`);
+  if (alvo) soEsteFixo(alvo.categoria, id);
+}
+function soEsteManual(id){
+  const alvo = pontosFixos.find(p => p.id === id);
+  if (alvo) soEsteFixo(alvo.categoria, id);
 }
 
-function renderizarFixosArquivo(){
-  /* remove grupos anteriores antes de recriar (evita marcadores duplicados) */
+/* pontos de arquivo + pontos manuais renderizados juntos, agrupados por categoria */
+function renderizarTodosFixos(){
   Object.values(gruposFixosArquivo).forEach(g => map.removeLayer(g));
   Object.keys(gruposFixosArquivo).forEach(k => delete gruposFixosArquivo[k]);
+  grupoFixos.clearLayers();
+  Object.keys(marcadoresFixos).forEach(k => delete marcadoresFixos[k]);
   const raiz = document.getElementById("lista-fixos-arquivo");
   raiz.innerHTML = "";
+  document.getElementById("lista-fixos").innerHTML = "";
+
   const porCategoria = {};
-  fixosArquivo.forEach(p => (porCategoria[p.categoria] ??= []).push(p));
-  Object.entries(porCategoria).forEach(([cat, pontos]) => {
-    const c = CATEGORIAS[cat] || CATEGORIAS.outro;
-    const grupo = L.layerGroup().addTo(map);
-    gruposFixosArquivo[cat] = grupo;
-    const marcadores = {};
-    pontos.forEach(p => {
-      const m = L.marker([p.lat, p.lng], {icon:iconeFixo(cat)})
-        .bindTooltip(p.nome).bindPopup(() => popupFixoArquivo(p));
-      integrarMarcadorRota(m);
-      marcadores[idArq(p)] = m;
-      if (!ocultosArquivo.has(idArq(p))) m.addTo(grupo);
-    });
+  fixosArquivo.forEach(p => (porCategoria[p.categoria] ??= []).push({tipo:"arquivo", p}));
+  pontosFixos.forEach(p => (porCategoria[p.categoria] ??= []).push({tipo:"manual", p}));
+  if (!Object.keys(porCategoria).length){
+    raiz.innerHTML = `<div class="vazio">Nenhum ponto fixo cadastrado ainda.</div>`;
+    return;
+  }
 
-    const det = document.createElement("details");
-    det.innerHTML = `
-      <summary class="linha-camada" style="cursor:pointer; list-style:none">
-        <input type="checkbox" title="Mostrar/ocultar todos">
-        <span style="font-size:14px">${c.icone}</span>
-        <b style="font-size:13px">${c.plural} (<span class="qt-vis"></span>/${pontos.length})</b>
-      </summary>`;
-    const chkTodos = det.querySelector("input");
-    const qtVis = det.querySelector(".qt-vis");
-    const atualizarCabecalho = () => {
-      const vis = pontos.filter(p => !ocultosArquivo.has(idArq(p))).length;
-      qtVis.textContent = vis;
-      chkTodos.checked = vis === pontos.length;
-      chkTodos.indeterminate = vis > 0 && vis < pontos.length;
-    };
-    chkTodos.addEventListener("click", ev => ev.stopPropagation());
-    chkTodos.addEventListener("change", () => {
-      pontos.forEach(p => {
-        const id = idArq(p), m = marcadores[id];
-        if (chkTodos.checked){ ocultosArquivo.delete(id); if (!grupo.hasLayer(m)) m.addTo(grupo); }
-        else { ocultosArquivo.add(id); grupo.removeLayer(m); }
+  const chaveDe = e => e.tipo === "arquivo" ? idArq(e.p) : e.p.id;
+  const estaOculto = e => e.tipo === "arquivo" ? ocultosArquivo.has(chaveDe(e)) : ocultosManuais.has(chaveDe(e));
+  const definirOculto = (e, oculto) => {
+    const conj = e.tipo === "arquivo" ? ocultosArquivo : ocultosManuais;
+    oculto ? conj.add(chaveDe(e)) : conj.delete(chaveDe(e));
+  };
+
+  const ordem = Object.keys(CATEGORIAS);
+  Object.entries(porCategoria)
+    .sort((a, b) => ordem.indexOf(a[0]) - ordem.indexOf(b[0]))
+    .forEach(([cat, entradas]) => {
+      const c = CATEGORIAS[cat] || CATEGORIAS.outro;
+      const grupo = L.layerGroup().addTo(map);
+      gruposFixosArquivo[cat] = grupo;
+
+      entradas.forEach(e => {
+        const p = e.p;
+        let m;
+        if (e.tipo === "arquivo"){
+          m = L.marker([p.lat, p.lng], {icon:iconeFixo(cat)})
+            .bindTooltip(p.nome).bindPopup(() => popupFixoArquivo(p));
+        } else {
+          m = L.marker([p.lat, p.lng], {icon:iconeFixo(cat), draggable:true})
+            .bindTooltip(p.nome).bindPopup(() => popupFixo(p));
+          m.on("dragend", () => {
+            const ll = m.getLatLng();
+            p.lat = ll.lat; p.lng = ll.lng;
+            salvar(CHAVE_FIXOS, pontosFixos);
+          });
+          marcadoresFixos[p.id] = m;
+        }
+        integrarMarcadorRota(m);
+        e.m = m;
+        if (!estaOculto(e)) m.addTo(grupo);
       });
-      det.querySelectorAll(".chk-ponto").forEach(cb => cb.checked = chkTodos.checked);
-      atualizarCabecalho();
-      salvarOcultos();
-    });
 
-    const corpo = document.createElement("div");
-    corpo.style.cssText = "max-height:190px; overflow-y:auto; margin-left:10px";
-    pontos.slice().sort((a,b) => a.nome.localeCompare(b.nome, "pt")).forEach(p => {
-      const id = idArq(p), m = marcadores[id];
-      const linha = document.createElement("div");
-      linha.className = "linha-camada";
-      linha.innerHTML = `
-        <input type="checkbox" class="chk-ponto" title="Mostrar no mapa e na prancha">
-        <span class="nome" style="font-size:12px">${esc(p.nome)}</span>
-        <button title="Deixar só esta" onclick="soEsteArquivo('${encodeURIComponent(id)}')">🎯</button>`;
-      const cb = linha.querySelector(".chk-ponto");
-      cb.checked = !ocultosArquivo.has(id);
-      cb.addEventListener("change", () => {
-        if (cb.checked){ ocultosArquivo.delete(id); m.addTo(grupo); }
-        else { ocultosArquivo.add(id); grupo.removeLayer(m); }
+      const det = document.createElement("details");
+      det.innerHTML = `
+        <summary class="linha-camada" style="cursor:pointer; list-style:none">
+          <input type="checkbox" title="Mostrar/ocultar todos">
+          <span style="font-size:14px">${c.icone}</span>
+          <b style="font-size:13px">${c.plural} (<span class="qt-vis"></span>/${entradas.length})</b>
+        </summary>`;
+      const chkTodos = det.querySelector("input");
+      const qtVis = det.querySelector(".qt-vis");
+      const atualizarCabecalho = () => {
+        const vis = entradas.filter(e => !estaOculto(e)).length;
+        qtVis.textContent = vis;
+        chkTodos.checked = vis === entradas.length;
+        chkTodos.indeterminate = vis > 0 && vis < entradas.length;
+      };
+      chkTodos.addEventListener("click", ev => ev.stopPropagation());
+      chkTodos.addEventListener("change", () => {
+        entradas.forEach(e => {
+          definirOculto(e, !chkTodos.checked);
+          if (chkTodos.checked){ if (!grupo.hasLayer(e.m)) e.m.addTo(grupo); }
+          else grupo.removeLayer(e.m);
+        });
+        det.querySelectorAll(".chk-ponto").forEach(cb => cb.checked = chkTodos.checked);
         atualizarCabecalho();
-        salvarOcultos();
+        salvarOcultosTudo();
       });
-      linha.querySelector(".nome").addEventListener("click", () => {
-        if (!cb.checked){ cb.checked = true; ocultosArquivo.delete(id); m.addTo(grupo); atualizarCabecalho(); salvarOcultos(); }
-        map.setView([p.lat, p.lng], Math.max(map.getZoom(), 13));
-        m.openPopup();
+
+      const corpo = document.createElement("div");
+      corpo.style.cssText = "max-height:190px; overflow-y:auto; margin-left:10px";
+      entradas.slice().sort((a, b) => a.p.nome.localeCompare(b.p.nome, "pt")).forEach(e => {
+        const p = e.p;
+        const linha = document.createElement("div");
+        linha.className = "linha-camada";
+        const acoes = e.tipo === "arquivo"
+          ? `<button title="Deixar só esta" onclick="soEsteArquivo('${encodeURIComponent(chaveDe(e))}')">🎯</button>`
+          : `<button title="Deixar só esta" onclick="soEsteManual('${p.id}')">🎯</button>
+             <button title="Editar" onclick="abrirModalPonto('${p.id}')">✏️</button>
+             <button title="Excluir" onclick="excluirPontoFixo('${p.id}')">🗑️</button>`;
+        linha.innerHTML = `
+          <input type="checkbox" class="chk-ponto" title="Mostrar no mapa e na prancha">
+          <span class="nome" style="font-size:12px">${esc(p.nome)}</span>
+          ${acoes}`;
+        const cb = linha.querySelector(".chk-ponto");
+        cb.checked = !estaOculto(e);
+        cb.addEventListener("change", () => {
+          definirOculto(e, !cb.checked);
+          cb.checked ? e.m.addTo(grupo) : grupo.removeLayer(e.m);
+          atualizarCabecalho();
+          salvarOcultosTudo();
+        });
+        linha.querySelector(".nome").addEventListener("click", () => {
+          if (!cb.checked){
+            cb.checked = true;
+            definirOculto(e, false);
+            e.m.addTo(grupo);
+            atualizarCabecalho();
+            salvarOcultosTudo();
+          }
+          map.setView([p.lat, p.lng], Math.max(map.getZoom(), 13));
+          e.m.openPopup();
+        });
+        corpo.appendChild(linha);
       });
-      corpo.appendChild(linha);
+      atualizarCabecalho();
+      det.appendChild(corpo);
+      raiz.appendChild(det);
     });
-    atualizarCabecalho();
-    det.appendChild(corpo);
-    raiz.appendChild(det);
-  });
 }
+function renderizarFixosArquivo(){ renderizarTodosFixos(); }
 
 /* ================= Rotas de arquivo (dados/rotas.js) ================= */
 const rotasArquivo = (typeof DADOS_ROTAS !== "undefined") ? DADOS_ROTAS : [];
@@ -647,40 +709,7 @@ function popupFixo(p){
     </div>`;
 }
 
-function renderizarFixos(){
-  grupoFixos.clearLayers();
-  Object.keys(marcadoresFixos).forEach(k => delete marcadoresFixos[k]);
-  const lista = document.getElementById("lista-fixos");
-  lista.innerHTML = "";
-  if (!pontosFixos.length){
-    lista.innerHTML = `<div class="vazio">Nenhum ponto fixo cadastrado ainda.</div>`;
-  }
-  pontosFixos.forEach(p => {
-    const c = CATEGORIAS[p.categoria] || CATEGORIAS.outro;
-    const m = L.marker([p.lat, p.lng], {icon:iconeFixo(p.categoria), draggable:true})
-      .bindPopup(() => popupFixo(p)).addTo(grupoFixos);
-    m.on("dragend", () => {
-      const ll = m.getLatLng();
-      p.lat = ll.lat; p.lng = ll.lng;
-      salvar(CHAVE_FIXOS, pontosFixos);
-    });
-    integrarMarcadorRota(m);
-    marcadoresFixos[p.id] = m;
-
-    const linha = document.createElement("div");
-    linha.className = "linha-camada";
-    linha.innerHTML = `
-      <span style="font-size:14px">${c.icone}</span>
-      <span class="nome" title="${c.label}">${esc(p.nome)}</span>
-      <button title="Editar" onclick="abrirModalPonto('${p.id}')">✏️</button>
-      <button title="Excluir" onclick="excluirPontoFixo('${p.id}')">🗑️</button>`;
-    linha.querySelector(".nome").addEventListener("click", () => {
-      map.setView([p.lat, p.lng], Math.max(map.getZoom(), 14));
-      m.openPopup();
-    });
-    lista.appendChild(linha);
-  });
-}
+function renderizarFixos(){ renderizarTodosFixos(); }
 
 /* --- modal --- */
 let editandoId = null;
@@ -1417,7 +1446,7 @@ async function inserirMediaKm(){
 function itensLegendaPrancha(){
   const itens = [], vb = map.getBounds();
   pontosFixos.forEach(p => {
-    if (!vb.contains([p.lat, p.lng])) return;
+    if (ocultosManuais.has(p.id) || !vb.contains([p.lat, p.lng])) return;
     const c = CATEGORIAS[p.categoria] || CATEGORIAS.outro;
     itens.push({tipo:"ponto", cor:c.cor, rot:p.nome});
   });
@@ -1460,7 +1489,7 @@ function itensLegendaPrancha(){
 function listaCoordenadasPrancha(limite = 14){
   const vb = map.getBounds(), lista = [];
   pontosFixos.forEach(p => {
-    if (vb.contains([p.lat, p.lng]))
+    if (!ocultosManuais.has(p.id) && vb.contains([p.lat, p.lng]))
       lista.push({nome:p.nome, lat:p.lat, lng:p.lng, km:p.km || "", categoria:p.categoria});
   });
   fixosArquivo.forEach(p => {
@@ -1791,8 +1820,7 @@ map.on("locationerror", () => aviso("Não foi possível obter a localização GP
 
 /* ================= Inicialização ================= */
 renderizarRotasArquivo();
-renderizarFixosArquivo();
-renderizarFixos();
+renderizarTodosFixos();
 carregarDesenhos();
 </script>
 </body>
