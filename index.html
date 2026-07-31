@@ -217,7 +217,7 @@
           </div>
           <p class="dica">A prancha sai como imagem PNG da vista atual do mapa, com título,
             legenda automática, seta norte e escala.</p>
-          <input type="file" id="arquivo-importar" accept=".geojson,.json,.kml" style="display:none">
+          <input type="file" id="arquivo-importar" accept=".geojson,.json,.kml,.kmz" style="display:none">
           <p class="dica">Exporta pontos fixos + levantamento. O GeoJSON pode ser aberto no ArcGIS/QGIS
             e reimportado aqui em outro computador.</p>
         </div>
@@ -1388,6 +1388,24 @@ function exportarKML(){
 document.getElementById("arquivo-importar").addEventListener("change", ev => {
   const arq = ev.target.files[0];
   if (!arq) return;
+  if (arq.name.toLowerCase().endsWith(".kmz")){
+    // KMZ = KML compactado (padrão do Google Earth): descompacta no navegador
+    const leitorBin = new FileReader();
+    leitorBin.onload = async () => {
+      try {
+        await carregarScriptExt("https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js", "JSZip");
+        const zip = await JSZip.loadAsync(leitorBin.result);
+        const interno = Object.keys(zip.files).find(n => n.toLowerCase().endsWith(".kml"));
+        if (!interno) throw new Error("KMZ sem KML interno");
+        importarKmlLevantamento(await zip.file(interno).async("string"));
+      } catch (e) {
+        aviso("Não foi possível ler o KMZ (" + (e.message || e) + ").");
+      }
+      ev.target.value = "";
+    };
+    leitorBin.readAsArrayBuffer(arq);
+    return;
+  }
   const leitor = new FileReader();
   leitor.onload = () => {
     try {
