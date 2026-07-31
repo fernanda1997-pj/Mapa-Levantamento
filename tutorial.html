@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tutorial — Geoportal RTA-MSI</title>
+<style>
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%; font-family:'Segoe UI',system-ui,sans-serif; background:#0F1E3D;}
+  body{display:flex; flex-direction:column; color:#fff; overflow:hidden;}
+  header.top{display:flex; align-items:center; gap:10px; padding:10px 18px; background:#1E3A72;}
+  header.top b{font-size:15px;}
+  header.top small{opacity:.75;}
+  header.top .cont{margin-left:auto; font-size:13px; opacity:.8;}
+  #palco{flex:1; display:flex; align-items:center; justify-content:center; padding:14px; min-height:0;}
+  .slide{display:none; width:100%; height:100%; flex-direction:column; align-items:center; justify-content:center; gap:10px;}
+  .slide.ativo{display:flex;}
+  .slide h1{font-size:clamp(20px,3.2vw,34px);}
+  .slide .sub{color:#9DB4E0; font-size:clamp(13px,1.8vw,17px);}
+  .quadro{position:relative; max-width:min(96vw,1250px); max-height:70vh; border-radius:10px;
+    box-shadow:0 10px 40px rgba(0,0,0,.5); overflow:hidden; background:#fff;}
+  .quadro img{display:block; width:100%; height:auto; max-height:70vh; object-fit:contain;}
+  .hot{position:absolute; border:2px solid #FFD34D; border-radius:8px; cursor:pointer;
+    background:rgba(255,211,77,.08); transition:background .15s;}
+  .hot:hover{background:rgba(255,211,77,.22);}
+  .badge{position:absolute; top:-13px; left:-13px; width:26px; height:26px; border-radius:50%;
+    background:#FFD34D; color:#1E3A72; font-weight:800; font-size:14px; display:flex;
+    align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,.5);
+    animation:pulsa 1.6s infinite;}
+  @keyframes pulsa{0%,100%{transform:scale(1);}50%{transform:scale(1.18);}}
+  .cartao{position:absolute; z-index:30; background:#fff; color:#1E293B; border-radius:10px;
+    padding:12px 14px; max-width:300px; box-shadow:0 8px 30px rgba(0,0,0,.55); display:none;
+    font-size:13.5px; line-height:1.45;}
+  .cartao b{color:#1E3A72; display:block; margin-bottom:4px; font-size:14px;}
+  .legenda-nums{display:flex; flex-wrap:wrap; gap:8px; justify-content:center; max-width:1100px;}
+  .legenda-nums span{display:inline-flex; align-items:center; gap:6px; background:rgba(255,255,255,.08);
+    padding:4px 10px; border-radius:20px; font-size:12.5px; cursor:pointer;}
+  .legenda-nums span:hover{background:rgba(255,255,255,.18);}
+  .legenda-nums i{font-style:normal; width:20px; height:20px; border-radius:50%; background:#FFD34D;
+    color:#1E3A72; font-weight:800; font-size:12px; display:inline-flex; align-items:center; justify-content:center;}
+  .extra{color:#FFD34D; font-size:13.5px; max-width:900px; text-align:center;}
+  footer.nav{display:flex; align-items:center; gap:14px; justify-content:center; padding:12px;}
+  footer.nav button{background:#fff; color:#1E3A72; border:none; border-radius:8px; font-size:15px;
+    font-weight:700; padding:8px 18px; cursor:pointer;}
+  footer.nav button:disabled{opacity:.3; cursor:default;}
+  .pontos{display:flex; gap:6px;}
+  .pontos i{width:9px; height:9px; border-radius:50%; background:rgba(255,255,255,.3); cursor:pointer;}
+  .pontos i.on{background:#FFD34D;}
+  .capa, .fim{text-align:center; gap:16px;}
+  .capa h1{font-size:clamp(28px,5vw,52px);}
+  .capa .link, .fim .link{color:#FFD34D; font-weight:700; font-size:clamp(14px,2.2vw,20px); text-decoration:none;}
+  .capa p, .fim p{color:#C9D6F0; max-width:760px; font-size:clamp(13px,1.9vw,17px); line-height:1.5;}
+  .fim ol{text-align:left; color:#E2E8F0; line-height:1.9; font-size:clamp(13px,1.9vw,16.5px); max-width:640px;}
+  .tecla{background:rgba(255,255,255,.12); border-radius:6px; padding:2px 8px; font-family:monospace;}
+</style>
+</head>
+<body>
+<header class="top">
+  <b>Tutorial — Geoportal RTA-MSI</b><small>Mapas de Levantamento de Serviço</small>
+  <span class="cont" id="contador"></span>
+</header>
+<div id="palco"></div>
+<footer class="nav">
+  <button id="ant">← Anterior</button>
+  <div class="pontos" id="pontos"></div>
+  <button id="prox">Próximo →</button>
+</footer>
+<script>
+const SLIDES = [{"tipo": "capa"}, {"tipo": "cena", "img": "tutorial-img/01-visao-geral.png", "vw": 1484, "vh": 699, "titulo": "A tela do Geoportal", "sub": "As 5 áreas principais", "extra": "", "hotspots": [{"r": [0, 0, 329, 70.2], "titulo": "Cabeçalho", "texto": "Identificação do Geoportal RTA-MSI. No celular, o painel abre e fecha pelo botão ☰."}, {"r": [23, 120.2, 283, 30], "titulo": "Mapa de fundo", "texto": "Padrão (ruas), Satélite (o melhor para a prancha) e Escuro."}, {"r": [11, 209.2, 307, 206], "titulo": "Regiões", "texto": "Clique no nome para dar zoom. As caixinhas mostram/ocultam; “Todas as regiões” liga/desliga tudo de uma vez."}, {"r": [330, 0, 44, 458], "titulo": "Barra de ferramentas", "texto": "Zoom, desenho (ponto, rota manual, área), edição e os botões especiais: 🛣️ rota pela estrada, 🏷️ nomes, 🧾 coordenadas e 🛰️ GPS."}, {"r": [1456, 683, 20, 8], "titulo": "Coordenadas do cursor", "texto": "Posição do mouse em Lat/Lon e UTM (SIRGAS 2000), em tempo real."}]}, {"tipo": "cena", "img": "tutorial-img/02-pontos-fixos.png", "vw": 1484, "vh": 699, "titulo": "Pontos fixos", "sub": "Buscar, filtrar e cadastrar", "extra": "", "hotspots": [{"r": [23, 70.2, 283, 37], "titulo": "Grupo por categoria", "texto": "A seta ▶ abre a lista. O contador (150/150) mostra visíveis/total. A caixinha do grupo liga/desliga todos de uma vez."}, {"r": [33, 111.2, 273, 28], "titulo": "Busca rápida", "texto": "Digite parte do nome — sem precisar de acento. Ex.: “porto” filtra Porto Nacional, Porto Alegre..."}, {"r": [0, 0, 0, 0], "titulo": "Mostrar / ocultar", "texto": "A caixinha controla se o ponto aparece no mapa, na legenda e nas coordenadas da prancha."}, {"r": [0, 0, 0, 0], "titulo": "🎯 Só esta", "texto": "Esconde todos os outros do grupo e deixa só o ponto escolhido — ideal para montar a prancha."}, {"r": [23, 242.2, 283, 33], "titulo": "Adicionar ponto fixo", "texto": "Cadastre usinas, canteiros etc. pelo nome, por Lat/Lon, UTM ou clicando no mapa. O campo “Km na rodovia” sai na prancha."}]}, {"tipo": "cena", "img": "tutorial-img/03-rota-estrada.png", "vw": 1484, "vh": 699, "titulo": "Rota pela estrada", "sub": "2 cliques e o trajeto aparece seguindo as rodovias", "extra": "", "hotspots": [{"r": [1234, 10, 240, 108.2], "titulo": "Painel da rota", "texto": "Mostra a distância pela estrada e os botões: ✔ Concluir (salva), ↩ Desfazer (tira o último ponto) e ✖ Cancelar."}, {"r": [342, 294, 30, 30], "titulo": "Botão 🛣️", "texto": "Ativa o modo rota. Dica: nos balões dos pontos fixos existe o atalho “Rota daqui”."}]}, {"tipo": "cena", "img": "tutorial-img/04-rota-popup.png", "vw": 1484, "vh": 699, "titulo": "A rota pronta", "sub": "Pavimento identificado e ações no balão", "extra": "Os trechos de estrada de chão aparecem tracejados em marrom sobre a rota — e saem na prancha com a legenda.", "hotspots": [{"r": [723, 214.3, 347, 140.7], "titulo": "Balão da rota", "texto": "Nome, extensão, asfalto × estrada de chão e os botões: 🔁 Alterar rota (reabre com os pontos originais), ⬇️ Baixar (KML), ✏️ Renomear e 🗑️ Excluir."}]}, {"tipo": "cena", "img": "tutorial-img/05-levantamento.png", "vw": 1484, "vh": 699, "titulo": "Salvar e abrir o levantamento", "sub": "O arquivo da pasta pessoal volta 100% editável", "extra": "", "hotspots": [{"r": [23, 355.1, 283, 31], "titulo": "Lista do levantamento", "texto": "Cada rota/ponto com: ⬇️ baixar em KML, ✏️ renomear e 🗑️ excluir. Clique no nome para dar zoom."}, {"r": [23, 394.1, 137.9, 35], "titulo": "💾 Salvar (KML)", "texto": "Baixa TODO o levantamento num arquivo só — guarde na sua pasta pessoal."}, {"r": [23, 435.1, 283, 35], "titulo": "📂 Abrir", "texto": "Traz o arquivo de volta (KML, KMZ ou GeoJSON) para continuar de onde parou — inclusive rotas do Google Earth."}]}, {"tipo": "cena", "img": "tutorial-img/06-prancha-modal.png", "vw": 1484, "vh": 699, "titulo": "Gerar a prancha", "sub": "Mapa de localização pronto em 1 clique", "extra": "", "hotspots": [{"r": [560, 135.6, 364, 33], "titulo": "Título e subtítulo", "texto": "Saem na caixa branca da prancha, junto com as logos RTA e MSI."}, {"r": [560, 259.6, 364, 35], "titulo": "Referência dos KM", "texto": "O canteiro já vem selecionado: as distâncias pela estrada até cada ponto saem no bloco COORDENADAS."}, {"r": [560, 339.6, 364, 84], "titulo": "Memória de cálculo", "texto": "Texto livre que sai num quadro ao lado das coordenadas — média, DMT, observações do orçamento."}, {"r": [560, 456.6, 270.4, 35], "titulo": "Média automática", "texto": "Escolha a rota e clique ➕: entra a linha pronta, ex.: CANTEIRO/OBRA: 34,94/2 = 17,47 KM, com o detalhamento de estrada de chão."}, {"r": [746.5, 581.4, 177.5, 33], "titulo": "Gerar PNG", "texto": "A prancha baixa pronta para o relatório."}]}, {"tipo": "cena", "img": "tutorial-img/07-prancha.png", "vw": 1154, "vh": 849, "titulo": "A prancha pronta", "sub": "Gerada pelo botão — este é um exemplo real", "extra": "", "hotspots": [{"r": [15, 10, 510, 80], "titulo": "Título + logos", "texto": "RTA e MSI com o título e o subtítulo que você digitou na janela da prancha."}, {"r": [830, 8, 318, 240], "titulo": "Legenda automática", "texto": "Entra sozinha com o que estava visível: pontos pelo nome e cada rota com cor e km — com a sublinha asfalto × estrada de chão."}, {"r": [895, 630, 252, 65], "titulo": "Escala e norte", "texto": "Escala gráfica segmentada e seta norte, no padrão de prancha cartográfica."}, {"r": [8, 695, 680, 150], "titulo": "COORDENADAS", "texto": "Cada ponto com coordenadas e o KM pela estrada calculado a partir do canteiro."}, {"r": [700, 695, 450, 100], "titulo": "Memória de cálculo", "texto": "O quadro livre com a média da rota (total/2 = DMT) e as anotações do orçamento."}]}, {"tipo": "fim"}];
+const palco = document.getElementById("palco");
+
+SLIDES.forEach((s, idx) => {
+  const el = document.createElement("div");
+  el.className = "slide" + (idx === 0 ? " ativo" : "");
+  if (s.tipo === "capa"){
+    el.classList.add("capa");
+    el.innerHTML = `
+      <h1>Geoportal RTA-MSI</h1>
+      <div class="sub" style="font-size:clamp(15px,2.4vw,22px)">Tutorial interativo — Mapas de Levantamento de Serviço</div>
+      <a class="link" href="https://mapa-levantamento.vercel.app" target="_blank">mapa-levantamento.vercel.app</a>
+      <p>Navegue com os botões abaixo ou com as setas <span class="tecla">←</span> <span class="tecla">→</span> do teclado.<br>
+      Em cada tela, <b style="color:#FFD34D">clique nos números amarelos</b> para ver o que é cada coisa.</p>
+      <p style="opacity:.65; font-size:13px">Plataforma em desenvolvimento — novas funções entram toda semana.</p>`;
+  } else if (s.tipo === "fim"){
+    el.classList.add("fim");
+    el.innerHTML = `
+      <h1>O fluxo completo 🛣️</h1>
+      <ol>
+        <li>Escolha os <b>pontos fixos</b> do trecho (busca 🔍 e 🎯 Só esta)</li>
+        <li>Trace a <b>rota pela estrada</b> (canteiro → pedreira/areal/cidade)</li>
+        <li>O <b>pavimento</b> (asfalto × chão) é identificado sozinho</li>
+        <li><b>💾 Salvar (KML)</b> na sua pasta — reabra e altere quando precisar (🔁)</li>
+        <li>Gere a <b>prancha</b> com legenda, coordenadas e memória de cálculo</li>
+      </ol>
+      <a class="link" href="https://mapa-levantamento.vercel.app" target="_blank">Abrir o Geoportal agora →</a>
+      <p style="opacity:.7">Dúvidas e sugestões: fale com a Fernanda 😉</p>`;
+  } else {
+    el.innerHTML = `<h1>${s.titulo}</h1><div class="sub">${s.sub}</div>`;
+    const quadro = document.createElement("div");
+    quadro.className = "quadro";
+    const img = document.createElement("img");
+    img.src = s.img;
+    quadro.appendChild(img);
+    const nums = document.createElement("div");
+    nums.className = "legenda-nums";
+    s.hotspots.forEach((hs, i) => {
+      const [x, y, w, h] = hs.r;
+      const hot = document.createElement("div");
+      hot.className = "hot";
+      hot.style.left = (x / s.vw * 100) + "%";
+      hot.style.top = (y / s.vh * 100) + "%";
+      hot.style.width = (w / s.vw * 100) + "%";
+      hot.style.height = (h / s.vh * 100) + "%";
+      hot.innerHTML = `<span class="badge">${i + 1}</span>`;
+      const cartao = document.createElement("div");
+      cartao.className = "cartao";
+      cartao.innerHTML = `<b>${i + 1}. ${hs.titulo}</b>${hs.texto}`;
+      const mostra = () => {
+        quadro.querySelectorAll(".cartao").forEach(c => c.style.display = "none");
+        cartao.style.display = "block";
+        const px = x / s.vw, py = y / s.vh;
+        cartao.style.left = px > .55 ? "auto" : `calc(${px * 100}% + 20px)`;
+        cartao.style.right = px > .55 ? `calc(${(1 - px) * 100}% + 10px)` : "auto";
+        cartao.style.top = `min(${py * 100}%, calc(100% - 140px))`;
+      };
+      hot.addEventListener("click", ev => { ev.stopPropagation(); mostra(); });
+      quadro.appendChild(hot);
+      quadro.appendChild(cartao);
+      const chip = document.createElement("span");
+      chip.innerHTML = `<i>${i + 1}</i>${hs.titulo}`;
+      chip.addEventListener("click", mostra);
+      nums.appendChild(chip);
+    });
+    quadro.addEventListener("click", () => quadro.querySelectorAll(".cartao").forEach(c => c.style.display = "none"));
+    el.appendChild(quadro);
+    el.appendChild(nums);
+    if (s.extra){
+      const ex = document.createElement("div");
+      ex.className = "extra";
+      ex.textContent = "💡 " + s.extra;
+      el.appendChild(ex);
+    }
+  }
+  palco.appendChild(el);
+});
+
+let atual = 0;
+const pontos = document.getElementById("pontos");
+SLIDES.forEach((_, i) => {
+  const p = document.createElement("i");
+  p.addEventListener("click", () => ir(i));
+  pontos.appendChild(p);
+});
+function ir(n){
+  atual = Math.max(0, Math.min(SLIDES.length - 1, n));
+  document.querySelectorAll(".slide").forEach((s, i) => s.classList.toggle("ativo", i === atual));
+  document.querySelectorAll(".pontos i").forEach((p, i) => p.classList.toggle("on", i === atual));
+  document.getElementById("ant").disabled = atual === 0;
+  document.getElementById("prox").disabled = atual === SLIDES.length - 1;
+  document.getElementById("contador").textContent = (atual + 1) + " / " + SLIDES.length;
+}
+document.getElementById("ant").addEventListener("click", () => ir(atual - 1));
+document.getElementById("prox").addEventListener("click", () => ir(atual + 1));
+document.addEventListener("keydown", ev => {
+  if (ev.key === "ArrowLeft") ir(atual - 1);
+  if (ev.key === "ArrowRight" || ev.key === " ") ir(atual + 1);
+});
+let toqueX = null;
+document.addEventListener("touchstart", ev => toqueX = ev.touches[0].clientX);
+document.addEventListener("touchend", ev => {
+  if (toqueX === null) return;
+  const dx = ev.changedTouches[0].clientX - toqueX;
+  if (Math.abs(dx) > 60) ir(atual + (dx < 0 ? 1 : -1));
+  toqueX = null;
+});
+ir(0);
+</script>
+</body>
+</html>

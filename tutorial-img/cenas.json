@@ -1,0 +1,311 @@
+{
+ "viewport": [
+  1484,
+  699
+ ],
+ "cenas": {
+  "01-visao-geral": {
+   "titulo": "A tela do Geoportal",
+   "sub": "As 5 áreas principais",
+   "hotspots": [
+    {
+     "r": [
+      0,
+      0,
+      329,
+      70.2
+     ],
+     "titulo": "Cabeçalho",
+     "texto": "Identificação do Geoportal RTA-MSI. No celular, o painel abre e fecha pelo botão ☰."
+    },
+    {
+     "r": [
+      23,
+      120.2,
+      283,
+      30
+     ],
+     "titulo": "Mapa de fundo",
+     "texto": "Padrão (ruas), Satélite (o melhor para a prancha) e Escuro."
+    },
+    {
+     "r": [
+      11,
+      209.2,
+      307,
+      206
+     ],
+     "titulo": "Regiões",
+     "texto": "Clique no nome para dar zoom. As caixinhas mostram/ocultam; “Todas as regiões” liga/desliga tudo de uma vez."
+    },
+    {
+     "r": [
+      330,
+      0,
+      44,
+      458
+     ],
+     "titulo": "Barra de ferramentas",
+     "texto": "Zoom, desenho (ponto, rota manual, área), edição e os botões especiais: 🛣️ rota pela estrada, 🏷️ nomes, 🧾 coordenadas e 🛰️ GPS."
+    },
+    {
+     "r": [
+      1456,
+      683,
+      20,
+      8
+     ],
+     "titulo": "Coordenadas do cursor",
+     "texto": "Posição do mouse em Lat/Lon e UTM (SIRGAS 2000), em tempo real."
+    }
+   ]
+  },
+  "02-pontos-fixos": {
+   "titulo": "Pontos fixos",
+   "sub": "Buscar, filtrar e cadastrar",
+   "hotspots": [
+    {
+     "r": [
+      23,
+      70.2,
+      283,
+      37
+     ],
+     "titulo": "Grupo por categoria",
+     "texto": "A seta ▶ abre a lista. O contador (150/150) mostra visíveis/total. A caixinha do grupo liga/desliga todos de uma vez."
+    },
+    {
+     "r": [
+      33,
+      111.2,
+      273,
+      28
+     ],
+     "titulo": "Busca rápida",
+     "texto": "Digite parte do nome — sem precisar de acento. Ex.: “porto” filtra Porto Nacional, Porto Alegre..."
+    },
+    {
+     "r": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "titulo": "Mostrar / ocultar",
+     "texto": "A caixinha controla se o ponto aparece no mapa, na legenda e nas coordenadas da prancha."
+    },
+    {
+     "r": [
+      0,
+      0,
+      0,
+      0
+     ],
+     "titulo": "🎯 Só esta",
+     "texto": "Esconde todos os outros do grupo e deixa só o ponto escolhido — ideal para montar a prancha."
+    },
+    {
+     "r": [
+      23,
+      242.2,
+      283,
+      33
+     ],
+     "titulo": "Adicionar ponto fixo",
+     "texto": "Cadastre usinas, canteiros etc. pelo nome, por Lat/Lon, UTM ou clicando no mapa. O campo “Km na rodovia” sai na prancha."
+    }
+   ]
+  },
+  "03-rota-estrada": {
+   "titulo": "Rota pela estrada",
+   "sub": "2 cliques e o trajeto aparece seguindo as rodovias",
+   "hotspots": [
+    {
+     "r": [
+      1234,
+      10,
+      240,
+      108.2
+     ],
+     "titulo": "Painel da rota",
+     "texto": "Mostra a distância pela estrada e os botões: ✔ Concluir (salva), ↩ Desfazer (tira o último ponto) e ✖ Cancelar."
+    },
+    {
+     "r": [
+      342,
+      294,
+      30,
+      30
+     ],
+     "titulo": "Botão 🛣️",
+     "texto": "Ativa o modo rota. Dica: nos balões dos pontos fixos existe o atalho “Rota daqui”."
+    }
+   ]
+  },
+  "04-rota-popup": {
+   "titulo": "A rota pronta",
+   "sub": "Pavimento identificado e ações no balão",
+   "hotspots": [
+    {
+     "r": [
+      723,
+      214.3,
+      347,
+      140.7
+     ],
+     "titulo": "Balão da rota",
+     "texto": "Nome, extensão, asfalto × estrada de chão e os botões: 🔁 Alterar rota (reabre com os pontos originais), ⬇️ Baixar (KML), ✏️ Renomear e 🗑️ Excluir."
+    }
+   ],
+   "extra": "Os trechos de estrada de chão aparecem tracejados em marrom sobre a rota — e saem na prancha com a legenda."
+  },
+  "05-levantamento": {
+   "titulo": "Salvar e abrir o levantamento",
+   "sub": "O arquivo da pasta pessoal volta 100% editável",
+   "hotspots": [
+    {
+     "r": [
+      23,
+      355.1,
+      283,
+      31
+     ],
+     "titulo": "Lista do levantamento",
+     "texto": "Cada rota/ponto com: ⬇️ baixar em KML, ✏️ renomear e 🗑️ excluir. Clique no nome para dar zoom."
+    },
+    {
+     "r": [
+      23,
+      394.1,
+      137.9,
+      35
+     ],
+     "titulo": "💾 Salvar (KML)",
+     "texto": "Baixa TODO o levantamento num arquivo só — guarde na sua pasta pessoal."
+    },
+    {
+     "r": [
+      23,
+      435.1,
+      283,
+      35
+     ],
+     "titulo": "📂 Abrir",
+     "texto": "Traz o arquivo de volta (KML, KMZ ou GeoJSON) para continuar de onde parou — inclusive rotas do Google Earth."
+    }
+   ]
+  },
+  "06-prancha-modal": {
+   "titulo": "Gerar a prancha",
+   "sub": "Mapa de localização pronto em 1 clique",
+   "hotspots": [
+    {
+     "r": [
+      560,
+      135.6,
+      364,
+      33
+     ],
+     "titulo": "Título e subtítulo",
+     "texto": "Saem na caixa branca da prancha, junto com as logos RTA e MSI."
+    },
+    {
+     "r": [
+      560,
+      259.6,
+      364,
+      35
+     ],
+     "titulo": "Referência dos KM",
+     "texto": "O canteiro já vem selecionado: as distâncias pela estrada até cada ponto saem no bloco COORDENADAS."
+    },
+    {
+     "r": [
+      560,
+      339.6,
+      364,
+      84
+     ],
+     "titulo": "Memória de cálculo",
+     "texto": "Texto livre que sai num quadro ao lado das coordenadas — média, DMT, observações do orçamento."
+    },
+    {
+     "r": [
+      560,
+      456.6,
+      270.4,
+      35
+     ],
+     "titulo": "Média automática",
+     "texto": "Escolha a rota e clique ➕: entra a linha pronta, ex.: CANTEIRO/OBRA: 34,94/2 = 17,47 KM, com o detalhamento de estrada de chão."
+    },
+    {
+     "r": [
+      746.5,
+      581.4,
+      177.5,
+      33
+     ],
+     "titulo": "Gerar PNG",
+     "texto": "A prancha baixa pronta para o relatório."
+    }
+   ]
+  },
+  "07-prancha": {
+   "titulo": "A prancha pronta",
+   "sub": "Gerada pelo botao — este e um exemplo real",
+   "hotspots": [
+    {
+     "r": [
+      20,
+      18,
+      430,
+      95
+     ],
+     "titulo": "Titulo + logos",
+     "texto": "RTA e MSI com o titulo e o subtitulo que voce digitou."
+    },
+    {
+     "r": [
+      1030,
+      18,
+      430,
+      190
+     ],
+     "titulo": "Legenda automatica",
+     "texto": "Entra sozinha com os pontos e rotas visiveis, cada rota com cor e km — e a sublinha asfalto x estrada de chao."
+    },
+    {
+     "r": [
+      1050,
+      560,
+      420,
+      90
+     ],
+     "titulo": "Escala e norte",
+     "texto": "Escala grafica segmentada e seta norte."
+    },
+    {
+     "r": [
+      15,
+      700,
+      850,
+      140
+     ],
+     "titulo": "COORDENADAS",
+     "texto": "Cada ponto com coordenadas e o KM pela estrada a partir do canteiro."
+    },
+    {
+     "r": [
+      920,
+      700,
+      540,
+      140
+     ],
+     "titulo": "Memoria de calculo",
+     "texto": "O quadro com a media da rota (total/2) e suas anotacoes."
+    }
+   ]
+  }
+ }
+}
