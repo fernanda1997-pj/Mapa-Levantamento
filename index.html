@@ -192,7 +192,9 @@
         <summary>✏️ Levantamento (pontos e rotas)</summary>
         <div class="corpo">
           <div id="lista-desenhos"></div>
-          <button class="btn secundario" id="btn-excluir-tudo" style="margin-top:8px; display:none"
+          <button class="btn secundario" id="btn-baixar-tudo" style="margin-top:8px; display:none"
+            onclick="baixarLevantamentoKml()">⬇️ Baixar levantamento (KML)</button>
+          <button class="btn secundario" id="btn-excluir-tudo" style="margin-top:6px; display:none"
             onclick="excluirTodosDesenhos()">🗑️ Excluir todo o levantamento</button>
           <p class="dica">Use a barra de ferramentas no canto do mapa para desenhar
             <b>pontos</b>, <b>rotas</b> e <b>áreas</b>. Rotas mostram a extensão em km.
@@ -215,7 +217,7 @@
           </div>
           <p class="dica">A prancha sai como imagem PNG da vista atual do mapa, com título,
             legenda automática, seta norte e escala.</p>
-          <input type="file" id="arquivo-importar" accept=".geojson,.json" style="display:none">
+          <input type="file" id="arquivo-importar" accept=".geojson,.json,.kml" style="display:none">
           <p class="dica">Exporta pontos fixos + levantamento. O GeoJSON pode ser aberto no ArcGIS/QGIS
             e reimportado aqui em outro computador.</p>
         </div>
@@ -1136,6 +1138,7 @@ function renderizarListaDesenhos(){
   lista.innerHTML = "";
   const camadas = Object.values(camadasDesenho);
   document.getElementById("btn-excluir-tudo").style.display = camadas.length ? "" : "none";
+  document.getElementById("btn-baixar-tudo").style.display = camadas.length ? "" : "none";
   if (!camadas.length){
     lista.innerHTML = `<div class="vazio">Nada desenhado ainda.</div>`;
     return;
@@ -1160,17 +1163,91 @@ function renderizarListaDesenhos(){
   });
 }
 
-/* baixa um único desenho como GeoJSON (para guardar e reimportar depois) */
+/* KML dos desenhos do levantamento, com os dados do geoportal embutidos
+   (ExtendedData) para reimportar e continuar editando (🔁) */
+function kmlDeDesenhos(camadas, nomeDoc){
+  const escXml = t => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  let kml = `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n<name>${escXml(nomeDoc)}</name>\n`;
+  camadas.forEach(l => {
+    const nome = escXml(l._nomeRTA || "(sem nome)");
+    const props = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "",
+                   legs:l._legsRTA || null, pav:l._pavRTA || null,
+                   waypoints:l._waypointsRTA || null, origem:"levantamento"};
+    const ext = `<ExtendedData><Data name="geoportal"><value>${escXml(JSON.stringify(props))}</value></Data></ExtendedData>`;
+    const g = l.toGeoJSON().geometry;
+    const {medida} = infoGeom(l);
+    const desc = escXml(medida || "");
+    const cor = corKML(l._corRTA || "#DC2626");
+    if (g.type === "Point"){
+      kml += `<Placemark><name>${nome}</name><description>${desc}</description>${ext}` +
+        `<Point><coordinates>${g.coordinates[0]},${g.coordinates[1]},0</coordinates></Point></Placemark>\n`;
+    } else if (g.type === "LineString"){
+      const cs = g.coordinates.map(c => `${c[0]},${c[1]},0`).join(" ");
+      kml += `<Placemark><name>${nome}</name><description>${desc}</description>${ext}` +
+        `<Style><LineStyle><color>${cor}</color><width>4</width></LineStyle></Style>` +
+        `<LineString><tessellate>1</tessellate><coordinates>${cs}</coordinates></LineString></Placemark>\n`;
+    } else if (g.type === "Polygon"){
+      const cs = g.coordinates[0].map(c => `${c[0]},${c[1]},0`).join(" ");
+      kml += `<Placemark><name>${nome}</name><description>${desc}</description>${ext}` +
+        `<Style><LineStyle><color>${cor}</color><width>3</width></LineStyle><PolyStyle><color>4d${cor.slice(2)}</color></PolyStyle></Style>` +
+        `<Polygon><outerBoundaryIs><LinearRing><coordinates>${cs}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n`;
+    }
+  });
+  return kml + `</Document></kml>`;
+}
+/* baixa um único desenho como KML */
 function baixarDesenho(id){
   const l = camadasDesenho[id];
   if (!l) return;
-  const f = l.toGeoJSON();
-  f.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "",
-                  legs:l._legsRTA || null, pav:l._pavRTA || null,
-                  waypoints:l._waypointsRTA || null, origem:"levantamento"};
-  const fc = {type:"FeatureCollection", features:[f]};
   const base = (l._nomeRTA || "rota").replace(/[^\w\- À-ÿ]+/g, "").trim().replace(/\s+/g, "_") || "rota";
-  baixar(`${base}.geojson`, JSON.stringify(fc, null, 2), "application/geo+json");
+  baixar(`${base}.kml`, kmlDeDesenhos([l], l._nomeRTA || "Rota"), "application/vnd.google-earth.kml+xml");
+}
+/* baixa todo o levantamento num KML só */
+function baixarLevantamentoKml(){
+  const camadas = Object.values(camadasDesenho);
+  if (!camadas.length){ aviso("Não há nada desenhado."); return; }
+  baixar(`levantamento_rta_${carimbo()}.kml`,
+         kmlDeDesenhos(camadas, "Levantamento RTA " + carimbo()),
+         "application/vnd.google-earth.kml+xml");
+}
+/* importa um KML gerado pelo geoportal (ou do Google Earth) como levantamento */
+function importarKmlLevantamento(texto){
+  const dom = new DOMParser().parseFromString(texto, "text/xml");
+  if (dom.querySelector("parsererror")) throw new Error("KML inválido");
+  let n = 0;
+  dom.querySelectorAll("Placemark").forEach(pm => {
+    let props = {};
+    pm.querySelectorAll("Data").forEach(d => {
+      if (d.getAttribute("name") === "geoportal"){
+        try { props = JSON.parse(d.querySelector("value")?.textContent || "{}"); } catch {}
+      }
+    });
+    if (props.id && camadasDesenho[props.id]) return; // já está no mapa
+    const nome = props.nome || pm.querySelector("name")?.textContent?.trim() || "Importado";
+    const parse = txt => txt.trim().split(/\s+/).map(par => {
+      const [lng, lat] = par.split(",").map(Number);
+      return [lat, lng];
+    });
+    const lnEl = pm.querySelector("LineString > coordinates");
+    const pgEl = pm.querySelector("Polygon coordinates");
+    const ptEl = pm.querySelector("Point > coordinates");
+    let layer = null;
+    if (lnEl && lnEl.textContent.trim()) layer = L.polyline(parse(lnEl.textContent));
+    else if (pgEl && pgEl.textContent.trim()) layer = L.polygon(parse(pgEl.textContent));
+    else if (ptEl && ptEl.textContent.trim()) layer = L.marker(parse(ptEl.textContent)[0]);
+    if (!layer) return;
+    layer._idRTA = props.id || novoId();
+    if (props.cor) layer._corRTA = props.cor;
+    if (props.legs) layer._legsRTA = props.legs;
+    if (props.pav) layer._pavRTA = props.pav;
+    if (props.waypoints) layer._waypointsRTA = props.waypoints;
+    registrarDesenho(layer, nome);
+    if (layer._pavRTA) renderizarChao(layer);
+    n++;
+  });
+  salvarDesenhos();
+  aviso(`Importado do KML: ${n} elemento(s) de levantamento.`);
 }
 function renomearDesenho(id){
   const l = camadasDesenho[id];
@@ -1314,6 +1391,11 @@ document.getElementById("arquivo-importar").addEventListener("change", ev => {
   const leitor = new FileReader();
   leitor.onload = () => {
     try {
+      if (arq.name.toLowerCase().endsWith(".kml") || leitor.result.trim().startsWith("<")){
+        importarKmlLevantamento(leitor.result);
+        ev.target.value = "";
+        return;
+      }
       const fc = JSON.parse(leitor.result);
       let nFixos = 0, nDesenhos = 0;
       (fc.features || []).forEach(f => {
