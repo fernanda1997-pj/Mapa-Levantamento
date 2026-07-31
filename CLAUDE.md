@@ -12,9 +12,11 @@ Usuária: Fernanda (RTA Engenheiros Consultores). Responder sempre em português
 | Arquivo | Papel |
 |---|---|
 | `index.html` | O app inteiro (HTML+CSS+JS, sem build). CDN: Leaflet 1.9.4, Geoman 2.18.3, proj4, html-to-image e JSZip sob demanda |
-| `converter_camadas.py` | Regenera `dados/` a partir de `camadas/` (shapefiles) e dos KMZ/KML da pasta (geopandas) |
+| `converter_camadas.py` | Regenera `dados/` a partir de `camadas/` (shapefiles) e dos KMZ/KML de `fontes/` (geopandas) |
 | `dados/regioes.js` | 6 regiões (R1,R2,R3,R11,R12,R13) — só shapefiles `R<num>_REGIÃO` entram |
 | `dados/pontos_fixos.js` | Pontos fixos de arquivo: pedreiras/areais/canteiros/cimento + 150 cidades IBGE (BC250, TIP_LOCALI 6 e 8) |
+| `fontes/` | KMZ/KML brutos de pontos fixos (PEDREIRAS, lotes por região) e o `.mxd` de origem — não vai ao ar |
+| `manual/` | Tutorial em `.docx`/`.pdf` (fora do git, uso local) |
 | `tutorial.html` + `tutorial-img/` | Slides interativos com prints reais (gerados por scripts no scratchpad da sessão original) |
 | `.vercelignore` | Só o site vai ao ar; shapefiles/KMZ/scripts ficam fora |
 
@@ -38,7 +40,7 @@ Usuária: Fernanda (RTA Engenheiros Consultores). Responder sempre em português
 
 ## Fluxos de trabalho
 
-- **Dados novos** (KMZ de pontos, shapefile): colocar na pasta → `python converter_camadas.py` → commit + push. Categoria dos pontos deduzida por regex no nome do placemark (`\bPEDR`, `\bCIMENTO`, `\bCAL\b`, `\bCANTEIRO`, `\bAREI?AL\b`, `\bUSINA`, `\bAPOIO\b`, `\bJAZIDA`), com fallback no nome do arquivo; sem categoria = ignorado; duplicatas entre arquivos (<250 m, mesma categoria) descartadas
+- **Dados novos** (KMZ de pontos em `fontes/`, shapefile em `camadas/`): colocar na pasta → `python converter_camadas.py` → commit + push. Categoria dos pontos deduzida por regex no nome do placemark (`\bPEDR`, `\bCIMENTO`, `\bCAL\b`, `\bCANTEIRO`, `\bAREI?AL\b`, `\bUSINA`, `\bAPOIO\b`, `\bJAZIDA`), com fallback no nome do arquivo; sem categoria = ignorado; duplicatas entre arquivos (<250 m, mesma categoria) descartadas
 - **Testar local**: servidor `python -m http.server 8765 --directory .` (há config "geoportal" no `.claude/launch.json` do projeto `web` vizinho)
 - **Deploy**: `git add -A && git commit && git push` — conferir com `curl https://mapa-levantamento.vercel.app/ | grep <marcador>`
 - A usuária confirma cada mudança visual; testar no preview antes de publicar

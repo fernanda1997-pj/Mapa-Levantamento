@@ -37,14 +37,17 @@ Para levar para outro computador ou para o ArcGIS/QGIS/Google Earth:
 | Caminho | Descrição |
 |---|---|
 | `index.html` | O geoportal (página única, abre direto do disco) |
-| `camadas/` | Shapefiles de origem das regiões |
-| `dados/regioes.js` / `.geojson` | Regiões convertidas para WGS84 |
-| `converter_camadas.py` | Regenera `dados/` a partir de `camadas/` |
-| `logo/` | Logo da RTA |
+| `tutorial.html` + `tutorial-img/` | Tutorial interativo em slides |
+| `camadas/` | Shapefiles de origem das regiões e cidades |
+| `dados/` | `regioes.js`/`.geojson`, `pontos_fixos.js`, `rotas.js` — gerados, não editar à mão |
+| `converter_camadas.py` | Regenera `dados/` a partir de `camadas/` e dos KMZ/KML de `fontes/` |
+| `fontes/` | KMZ/KML brutos de pontos fixos e o `.mxd` de origem — fora do site (`.vercelignore`) |
+| `logo/` | Logos RTA e MSI |
+| `manual/` | Tutorial em `.docx`/`.pdf` (fora do git, uso local) |
 
 ## Atualizar as regiões ou os pontos fixos de arquivo
 
-Coloque novos `.kmz`/`.kml` de pontos fixos na pasta (ou em `pontos fixos/`) e rode:
+Coloque novos `.kmz`/`.kml` de pontos fixos em `fontes/` (qualquer subpasta) e rode:
 
 ```bash
 python converter_camadas.py
