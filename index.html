@@ -192,34 +192,41 @@
         <summary>✏️ Levantamento (pontos e rotas)</summary>
         <div class="corpo">
           <div id="lista-desenhos"></div>
-          <button class="btn secundario" id="btn-baixar-tudo" style="margin-top:8px; display:none"
-            onclick="baixarLevantamentoKml()">⬇️ Baixar levantamento (KML)</button>
-          <button class="btn secundario" id="btn-excluir-tudo" style="margin-top:6px; display:none"
-            onclick="excluirTodosDesenhos()">🗑️ Excluir todo o levantamento</button>
-          <p class="dica">Use a barra de ferramentas no canto do mapa para desenhar
-            <b>pontos</b>, <b>rotas</b> e <b>áreas</b>. Rotas mostram a extensão em km.
-            Para editar ou apagar, use os botões de edição da mesma barra.<br>
-            <b>🛣️ Rota pela estrada:</b> clique em 2 pontos — no mapa ou em pedreiras
-            e outros pontos fixos — e o trajeto aparece na hora seguindo as rodovias;
-            continue clicando para estender e depois <b>Concluir</b>.</p>
+          <div class="grupo-btn" id="acoes-levantamento" style="margin-top:8px; display:none">
+            <button class="btn" onclick="baixarLevantamentoKml()">💾 Salvar (KML)</button>
+            <button class="btn secundario" onclick="excluirTodosDesenhos()">🗑️ Excluir tudo</button>
+          </div>
+          <button class="btn secundario" style="margin-top:6px"
+            onclick="document.getElementById('arquivo-importar').click()">📂 Abrir levantamento salvo</button>
+          <p class="dica"><b>Desenhar:</b> o 🛣️ traça a rota pela estrada com 2 cliques
+            (pontos fixos valem como origem/destino); a barra do canto também tem ponto,
+            rota manual e área.<br>
+            <b>Guardar:</b> Salvar (KML) baixa tudo num arquivo para a sua pasta;
+            depois é só Abrir (KML, KMZ ou GeoJSON) para continuar de onde parou.</p>
+        </div>
+      </details>
+
+      <details class="secao" open>
+        <summary>🖼️ Prancha (mapa de localização)</summary>
+        <div class="corpo">
+          <button class="btn" onclick="abrirModalPrancha()">🖼️ Gerar prancha (PNG)</button>
+          <p class="dica">Imagem pronta da vista atual: título, legenda automática,
+            coordenadas com KM, memória de cálculo, escala e norte.
+            Ative o fundo <b>Satélite</b> e enquadre a área antes de gerar.</p>
         </div>
       </details>
 
       <details class="secao">
-        <summary>💾 Exportar / Importar</summary>
+        <summary>📦 Backup completo</summary>
         <div class="corpo">
-          <button class="btn" onclick="abrirModalPrancha()">🖼️ Gerar prancha (mapa de localização)</button>
-          <div style="height:8px"></div>
-          <button class="btn secundario" onclick="exportarGeoJSON()">⬇️ Exportar GeoJSON</button>
           <div class="grupo-btn">
-            <button class="btn secundario" onclick="exportarKML()">⬇️ KML (Google Earth)</button>
-            <button class="btn secundario" onclick="document.getElementById('arquivo-importar').click()">⬆️ Importar</button>
+            <button class="btn secundario" onclick="exportarGeoJSON()">⬇️ GeoJSON</button>
+            <button class="btn secundario" onclick="exportarKML()">⬇️ KML</button>
           </div>
-          <p class="dica">A prancha sai como imagem PNG da vista atual do mapa, com título,
-            legenda automática, seta norte e escala.</p>
           <input type="file" id="arquivo-importar" accept=".geojson,.json,.kml,.kmz" style="display:none">
-          <p class="dica">Exporta pontos fixos + levantamento. O GeoJSON pode ser aberto no ArcGIS/QGIS
-            e reimportado aqui em outro computador.</p>
+          <p class="dica">Exporta <b>tudo</b> (pontos fixos + levantamento) para
+            ArcGIS/QGIS ou Google Earth. Para o dia a dia, prefira o
+            <b>Salvar (KML)</b> da seção Levantamento.</p>
         </div>
       </details>
 
@@ -1137,8 +1144,7 @@ function renderizarListaDesenhos(){
   const lista = document.getElementById("lista-desenhos");
   lista.innerHTML = "";
   const camadas = Object.values(camadasDesenho);
-  document.getElementById("btn-excluir-tudo").style.display = camadas.length ? "" : "none";
-  document.getElementById("btn-baixar-tudo").style.display = camadas.length ? "" : "none";
+  document.getElementById("acoes-levantamento").style.display = camadas.length ? "" : "none";
   if (!camadas.length){
     lista.innerHTML = `<div class="vazio">Nada desenhado ainda.</div>`;
     return;
