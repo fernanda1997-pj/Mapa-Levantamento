@@ -1050,6 +1050,8 @@ function popupDesenho(layer){
     ${pav ? `<div class="pop-info">🛣️ Pavimentado: ${fmtDist(pav.pav)} · 🟤 Estrada de chão: ${fmtDist(pav.chao)}</div>` : ""}
     <div class="pop-acoes">
       ${ehLinha && !pav ? `<button onclick="analisarPavimentoDesenho('${layer._idRTA}')">🛞 Pavimento</button>` : ""}
+      ${layer._waypointsRTA?.length ? `<button title="Reabrir para alterar" onclick="reabrirRota('${layer._idRTA}')">🔁 Alterar rota</button>` : ""}
+      <button title="Baixar GeoJSON" onclick="baixarDesenho('${layer._idRTA}')">⬇️ Baixar</button>
       <button onclick="renomearDesenho('${layer._idRTA}')">✏️ Renomear</button>
       <button onclick="excluirDesenho('${layer._idRTA}')">🗑️ Excluir</button>
     </div>`;
@@ -1108,7 +1110,8 @@ function salvarDesenhos(){
   Object.values(camadasDesenho).forEach(l => {
     const f = l.toGeoJSON();
     f.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "",
-                    legs:l._legsRTA || null, pav:l._pavRTA || null, origem:"levantamento"};
+                    legs:l._legsRTA || null, pav:l._pavRTA || null,
+                    waypoints:l._waypointsRTA || null, origem:"levantamento"};
     fc.features.push(f);
   });
   salvar(CHAVE_DESENHOS, fc);
@@ -1145,6 +1148,7 @@ function renderizarListaDesenhos(){
     linha.innerHTML = `
       <span style="font-size:13px">${ic}</span>
       <span class="nome">${esc(l._nomeRTA || "(sem nome)")}${medida ? ` <small style="color:#64748B">· ${medida}</small>` : ""}</span>
+      <button title="Baixar GeoJSON" onclick="baixarDesenho('${l._idRTA}')">⬇️</button>
       <button title="Renomear" onclick="renomearDesenho('${l._idRTA}')">✏️</button>
       <button title="Excluir" onclick="excluirDesenho('${l._idRTA}')">🗑️</button>`;
     linha.querySelector(".nome").addEventListener("click", () => {
@@ -1156,6 +1160,18 @@ function renderizarListaDesenhos(){
   });
 }
 
+/* baixa um único desenho como GeoJSON (para guardar e reimportar depois) */
+function baixarDesenho(id){
+  const l = camadasDesenho[id];
+  if (!l) return;
+  const f = l.toGeoJSON();
+  f.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "",
+                  legs:l._legsRTA || null, pav:l._pavRTA || null,
+                  waypoints:l._waypointsRTA || null, origem:"levantamento"};
+  const fc = {type:"FeatureCollection", features:[f]};
+  const base = (l._nomeRTA || "rota").replace(/[^\w\- À-ÿ]+/g, "").trim().replace(/\s+/g, "_") || "rota";
+  baixar(`${base}.geojson`, JSON.stringify(fc, null, 2), "application/geo+json");
+}
 function renomearDesenho(id){
   const l = camadasDesenho[id];
   if (!l) return;
@@ -1199,6 +1215,7 @@ function carregarDesenhos(){
         if (feat.properties?.cor) layer._corRTA = feat.properties.cor;
         if (feat.properties?.legs) layer._legsRTA = feat.properties.legs;
         if (feat.properties?.pav) layer._pavRTA = feat.properties.pav;
+        if (feat.properties?.waypoints) layer._waypointsRTA = feat.properties.waypoints;
         registrarDesenho(layer, feat.properties?.nome || "");
         if (layer._pavRTA) renderizarChao(layer);
       },
@@ -1316,7 +1333,12 @@ document.getElementById("arquivo-importar").addEventListener("change", ev => {
           if (p.id && camadasDesenho[p.id]) return;
           L.geoJSON(f, {onEachFeature: (feat, layer) => {
             layer._idRTA = p.id || novoId();
+            if (p.cor) layer._corRTA = p.cor;
+            if (p.legs) layer._legsRTA = p.legs;
+            if (p.pav) layer._pavRTA = p.pav;
+            if (p.waypoints) layer._waypointsRTA = p.waypoints;
             registrarDesenho(layer, p.nome || "Importado");
+            if (layer._pavRTA) renderizarChao(layer);
             nDesenhos++;
           }});
         }
@@ -1344,6 +1366,9 @@ let rotaPreview = null;
 let rotaGeom = null;
 let rotaLegs = null;
 let rotaMedida = "";
+let rotaBackup = null;       // rota reaberta p/ alteração (restaurada se cancelar)
+let rotaNomeSugerido = null;
+let rotaCorSugerida = null;
 let rotaCalculando = false;
 let rotaAbort = null;
 let rotaErro = false;
@@ -1451,11 +1476,15 @@ async function recalcularRotaEstrada(){
 }
 function concluirRotaEstrada(){
   if (!rotaGeom) return;
+  rotaBackup = null; // concluiu: não precisa restaurar a rota original
   const linha = L.geoJSON(rotaGeom).getLayers()[0];
   linha._legsRTA = rotaLegs && rotaLegs.length ? rotaLegs : null;
+  linha._waypointsRTA = rotaPontos.map(p => [+p.lat.toFixed(6), +p.lng.toFixed(6)]);
+  if (rotaCorSugerida) linha._corRTA = rotaCorSugerida;
   const medida = rotaMedida;
+  const sugestao = rotaNomeSugerido || ("Rota " + (Object.keys(camadasDesenho).length + 1));
+  rotaNomeSugerido = null; rotaCorSugerida = null;
   encerrarRotaEstrada();
-  const sugestao = "Rota " + (Object.keys(camadasDesenho).length + 1);
   registrarDesenho(linha, sugestao);
   salvarDesenhos();
   dialogoNome(`Nome (Rota pela estrada · ${medida})`, sugestao, nome => {
@@ -1463,6 +1492,29 @@ function concluirRotaEstrada(){
     salvarDesenhos();
   });
   analisarPavimento(linha).catch(() => {}); // asfalto x chão, preenchido em segundo plano
+}
+/* reabre uma rota concluída para pequenas alterações (usa os pontos originais) */
+function reabrirRota(id){
+  const l = camadasDesenho[id];
+  if (!l || !l._waypointsRTA || !l._waypointsRTA.length){
+    aviso("Esta rota não guardou os pontos originais (foi feita antes desse recurso) — trace de novo com o 🛣️.");
+    return;
+  }
+  map.closePopup();
+  const backup = l.toGeoJSON();
+  backup.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "",
+                       legs:l._legsRTA || null, pav:l._pavRTA || null,
+                       waypoints:l._waypointsRTA, origem:"levantamento"};
+  grupoDesenhos.removeLayer(l);
+  removerChao(id);
+  delete camadasDesenho[id];
+  salvarDesenhos();
+  iniciarRotaEstrada();
+  rotaBackup = backup;
+  rotaNomeSugerido = backup.properties.nome || null;
+  rotaCorSugerida = backup.properties.cor || null;
+  backup.properties.waypoints.forEach(([lat, lng]) => adicionarPontoRota(L.latLng(lat, lng)));
+  aviso("Rota reaberta: clique para estender, ↩ Desfazer para remover pontos, ✔ Concluir para salvar (✖ Cancelar volta como estava).");
 }
 function encerrarRotaEstrada(){
   rotaAtiva = false;
@@ -1474,6 +1526,21 @@ function encerrarRotaEstrada(){
   if (rotaPreview){ map.removeLayer(rotaPreview); rotaPreview = null; }
   rotaGeom = null; rotaLegs = null; rotaMedida = ""; rotaCalculando = false; rotaErro = false;
   if (rotaBanner){ map.removeControl(rotaBanner); rotaBanner = null; }
+  if (rotaBackup){ // cancelou uma rota reaberta: restaura a original como estava
+    const bk = rotaBackup;
+    rotaBackup = null; rotaNomeSugerido = null; rotaCorSugerida = null;
+    L.geoJSON(bk, {onEachFeature: (feat, layer) => {
+      const pr = feat.properties || {};
+      layer._idRTA = pr.id || novoId();
+      if (pr.cor) layer._corRTA = pr.cor;
+      if (pr.legs) layer._legsRTA = pr.legs;
+      if (pr.pav) layer._pavRTA = pr.pav;
+      if (pr.waypoints) layer._waypointsRTA = pr.waypoints;
+      registrarDesenho(layer, pr.nome || "");
+      if (layer._pavRTA) renderizarChao(layer);
+    }});
+    salvarDesenhos();
+  }
 }
 /* chamado pelos popups dos pontos fixos */
 function rotaDesdeAqui(lat, lng){
