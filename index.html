@@ -279,6 +279,16 @@
     <h2 id="mini-titulo"></h2>
     <p id="mini-texto" class="pop-info" style="display:none"></p>
     <input type="text" id="mini-input" style="display:none">
+    <div id="mini-cor-icone" style="display:none; gap:10px; margin-top:8px">
+      <div style="flex:0 0 64px">
+        <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:3px">Cor</label>
+        <input type="color" id="mini-cor" style="width:100%; height:36px; padding:2px; cursor:pointer">
+      </div>
+      <div style="flex:1">
+        <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:3px">Ícone</label>
+        <select id="mini-icone"></select>
+      </div>
+    </div>
     <div class="acoes">
       <button class="btn secundario" id="mini-cancelar">Cancelar</button>
       <button class="btn" id="mini-ok">OK</button>
@@ -474,7 +484,22 @@ function dialogoNome(titulo, valorInicial, cb){
   const inp = document.getElementById("mini-input");
   inp.style.display = "block"; inp.value = valorInicial || "";
   document.getElementById("mini-texto").style.display = "none";
+  document.getElementById("mini-cor-icone").style.display = "none";
   miniCallback = () => cb(inp.value.trim());
+  document.getElementById("modal-mini").classList.add("aberto");
+  setTimeout(() => { inp.focus(); inp.select(); }, 50);
+}
+/* igual ao dialogoNome, mas com cor e ícone do marcador (usado ao desenhar um ponto) */
+function dialogoNomeMarcador(titulo, valorInicial, corInicial, iconeInicial, cb){
+  document.getElementById("mini-titulo").textContent = titulo;
+  const inp = document.getElementById("mini-input");
+  inp.style.display = "block"; inp.value = valorInicial || "";
+  document.getElementById("mini-texto").style.display = "none";
+  document.getElementById("mini-cor-icone").style.display = "flex";
+  document.getElementById("mini-cor").value = corInicial;
+  document.getElementById("mini-icone").value = iconeInicial || "";
+  miniCallback = () => cb(inp.value.trim(), document.getElementById("mini-cor").value,
+                          document.getElementById("mini-icone").value);
   document.getElementById("modal-mini").classList.add("aberto");
   setTimeout(() => { inp.focus(); inp.select(); }, 50);
 }
@@ -483,6 +508,7 @@ function dialogoConfirmar(texto, cb){
   const t = document.getElementById("mini-texto");
   t.style.display = "block"; t.textContent = texto;
   document.getElementById("mini-input").style.display = "none";
+  document.getElementById("mini-cor-icone").style.display = "none";
   miniCallback = cb;
   document.getElementById("modal-mini").classList.add("aberto");
 }
@@ -579,7 +605,7 @@ function alternarRotulos(){
   localStorage.setItem("rta_geoportal_rotulos", rotulosAtivos ? "sim" : "nao");
   renderizarTodosFixos();
   Object.values(camadasDesenho).forEach(l => {
-    if (l instanceof L.Marker) aplicarRotulo(l, l._nomeRTA || "", [10, 0]);
+    if (l instanceof L.Marker) aplicarRotulo(l, l._nomeRTA || "", l._iconeRTA ? [13, -18] : [10, 0]);
   });
   aviso(rotulosAtivos ? "Nomes visíveis no mapa (saem na prancha)." : "Nomes ocultos.");
 }
@@ -820,12 +846,20 @@ const ICONES_PONTO = [
   {ic:"🚩", nome:"Marco"}, {ic:"⭐", nome:"Destaque"}, {ic:"🔥", nome:"Alerta"},
   {ic:"💧", nome:"Água"}, {ic:"🪵", nome:"Madeira"},
 ].filter((v, i, a) => a.findIndex(x => x.ic === v.ic) === i); // sem repetir ícone igual
-const selIcone = document.getElementById("pf-icone");
-ICONES_PONTO.forEach(({ic, nome}) => {
-  const o = document.createElement("option");
-  o.value = ic; o.textContent = `${ic}  ${nome}`;
-  selIcone.appendChild(o);
-});
+function popularSelectIcones(select, comOpcaoSemIcone){
+  if (comOpcaoSemIcone){
+    const semIcone = document.createElement("option");
+    semIcone.value = ""; semIcone.textContent = "● (sem ícone, só a cor)";
+    select.appendChild(semIcone);
+  }
+  ICONES_PONTO.forEach(({ic, nome}) => {
+    const o = document.createElement("option");
+    o.value = ic; o.textContent = `${ic}  ${nome}`;
+    select.appendChild(o);
+  });
+}
+popularSelectIcones(document.getElementById("pf-icone"), false);
+popularSelectIcones(document.getElementById("mini-icone"), true);
 selCat.addEventListener("change", () => {
   const c = CATEGORIAS[selCat.value];
   document.getElementById("pf-cor").value = c.cor;
@@ -989,6 +1023,20 @@ const grupoDesenhos = L.layerGroup().addTo(map);
 const camadasDesenho = {}; // id -> layer
 /* cada desenho ganha uma cor própria (aparece igual na legenda da prancha) */
 const CORES_DESENHO = ["#DC2626", "#2563EB", "#F97316", "#059669", "#7C3AED", "#0EA5E9", "#CA8A04", "#DB2777"];
+/* ícone de marcador do levantamento: com ícone escolhido vira um "pino" (igual aos pontos
+   fixos); sem ícone continua a bolinha colorida de sempre */
+function iconeDesenho(cor, icone){
+  if (icone) return L.divIcon({
+    className:"",
+    html:`<div class="marcador-fixo" style="background:${cor};width:30px;height:30px"><span>${icone}</span></div>`,
+    iconSize:[30,30], iconAnchor:[15,28], popupAnchor:[0,-26],
+  });
+  return L.divIcon({
+    className:"",
+    html:`<div style="width:16px;height:16px;border-radius:50%;background:${cor};border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)"></div>`,
+    iconSize:[16,16], iconAnchor:[8,8],
+  });
+}
 
 /* ---- pavimento (asfalto x estrada de chão) via Valhalla/OpenStreetMap ---- */
 const SUPERFICIES_CHAO = new Set(["compacted", "dirt", "gravel", "path", "impassable"]);
@@ -1133,12 +1181,8 @@ function registrarDesenho(layer, nome){
     layer.setStyle({color:layer._corRTA, weight:4});
   }
   if (layer instanceof L.Marker){
-    layer.setIcon(L.divIcon({
-      className:"",
-      html:`<div style="width:16px;height:16px;border-radius:50%;background:${layer._corRTA};border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)"></div>`,
-      iconSize:[16,16], iconAnchor:[8,8],
-    }));
-    aplicarRotulo(layer, nome, [10, 0]);
+    layer.setIcon(iconeDesenho(layer._corRTA, layer._iconeRTA));
+    aplicarRotulo(layer, nome, layer._iconeRTA ? [13, -18] : [10, 0]);
   }
   layer.bindPopup(() => popupDesenho(layer));
   layer.on("pm:edit pm:dragend pm:markerdragend", () => {
@@ -1159,7 +1203,7 @@ function salvarDesenhos(){
   const fc = {type:"FeatureCollection", features:[]};
   Object.values(camadasDesenho).forEach(l => {
     const f = l.toGeoJSON();
-    f.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "",
+    f.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "", icone:l._iconeRTA || "",
                     legs:l._legsRTA || null, pav:l._pavRTA || null,
                     waypoints:l._waypointsRTA || null, origem:"levantamento"};
     fc.features.push(f);
@@ -1218,7 +1262,7 @@ function kmlDeDesenhos(camadas, nomeDoc){
     `<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n<name>${escXml(nomeDoc)}</name>\n`;
   camadas.forEach(l => {
     const nome = escXml(l._nomeRTA || "(sem nome)");
-    const props = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "",
+    const props = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "", icone:l._iconeRTA || "",
                    legs:l._legsRTA || null, pav:l._pavRTA || null,
                    waypoints:l._waypointsRTA || null, origem:"levantamento"};
     const ext = `<ExtendedData><Data name="geoportal"><value>${escXml(JSON.stringify(props))}</value></Data></ExtendedData>`;
@@ -1286,6 +1330,7 @@ function importarKmlLevantamento(texto){
     if (!layer) return;
     layer._idRTA = props.id || novoId();
     if (props.cor) layer._corRTA = props.cor;
+    if (props.icone) layer._iconeRTA = props.icone;
     if (props.legs) layer._legsRTA = props.legs;
     if (props.pav) layer._pavRTA = props.pav;
     if (props.waypoints) layer._waypointsRTA = props.waypoints;
@@ -1299,10 +1344,21 @@ function importarKmlLevantamento(texto){
 function renomearDesenho(id){
   const l = camadasDesenho[id];
   if (!l) return;
+  if (l instanceof L.Marker){
+    dialogoNomeMarcador("Nome, cor e ícone do ponto", l._nomeRTA || "", l._corRTA, l._iconeRTA, (nome, cor, icone) => {
+      if (nome) l._nomeRTA = nome;
+      l._corRTA = cor;
+      l._iconeRTA = icone || undefined;
+      l.setIcon(iconeDesenho(l._corRTA, l._iconeRTA));
+      aplicarRotulo(l, l._nomeRTA || "", l._iconeRTA ? [13, -18] : [10, 0]);
+      l.closePopup();
+      salvarDesenhos();
+    });
+    return;
+  }
   dialogoNome("Nome do elemento", l._nomeRTA || "", nome => {
     if (nome) l._nomeRTA = nome;
     l.closePopup();
-    if (l instanceof L.Marker) aplicarRotulo(l, l._nomeRTA || "", [10, 0]);
     salvarDesenhos();
   });
 }
@@ -1323,6 +1379,17 @@ map.on("pm:create", ev => {
   const sugestao = tipo + " " + (Object.keys(camadasDesenho).length + 1);
   registrarDesenho(layer, sugestao);
   salvarDesenhos();
+  if (layer instanceof L.Marker){
+    dialogoNomeMarcador(`Nome, cor e ícone (${tipo})`, sugestao, layer._corRTA, layer._iconeRTA, (nome, cor, icone) => {
+      if (nome) layer._nomeRTA = nome;
+      layer._corRTA = cor;
+      layer._iconeRTA = icone || undefined;
+      layer.setIcon(iconeDesenho(layer._corRTA, layer._iconeRTA));
+      aplicarRotulo(layer, layer._nomeRTA, layer._iconeRTA ? [13, -18] : [10, 0]);
+      salvarDesenhos();
+    });
+    return;
+  }
   dialogoNome(`Nome (${tipo}${medida ? " · " + medida : ""})`, sugestao, nome => {
     if (nome) layer._nomeRTA = nome;
     salvarDesenhos();
@@ -1337,6 +1404,7 @@ function carregarDesenhos(){
       onEachFeature: (feat, layer) => {
         layer._idRTA = feat.properties?.id || novoId();
         if (feat.properties?.cor) layer._corRTA = feat.properties.cor;
+        if (feat.properties?.icone) layer._iconeRTA = feat.properties.icone;
         if (feat.properties?.legs) layer._legsRTA = feat.properties.legs;
         if (feat.properties?.pav) layer._pavRTA = feat.properties.pav;
         if (feat.properties?.waypoints) layer._waypointsRTA = feat.properties.waypoints;
@@ -1472,6 +1540,7 @@ document.getElementById("arquivo-importar").addEventListener("change", ev => {
             pontosFixos.push({
               id: p.id || novoId(), nome: p.nome || "Importado",
               categoria: CATEGORIAS[p.categoria] ? p.categoria : "outro",
+              cor: p.cor || "", icone: p.icone || "",
               descricao: p.descricao || "", km: p.km || "", lat, lng,
             });
             nFixos++;
@@ -1481,6 +1550,7 @@ document.getElementById("arquivo-importar").addEventListener("change", ev => {
           L.geoJSON(f, {onEachFeature: (feat, layer) => {
             layer._idRTA = p.id || novoId();
             if (p.cor) layer._corRTA = p.cor;
+            if (p.icone) layer._iconeRTA = p.icone;
             if (p.legs) layer._legsRTA = p.legs;
             if (p.pav) layer._pavRTA = p.pav;
             if (p.waypoints) layer._waypointsRTA = p.waypoints;
