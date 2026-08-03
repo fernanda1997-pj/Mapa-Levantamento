@@ -298,6 +298,16 @@
     <input type="text" id="pf-nome" placeholder="Ex.: Cimento — Depósito Palmas">
     <label>Categoria</label>
     <select id="pf-categoria"></select>
+    <div style="display:flex; gap:10px">
+      <div style="flex:0 0 64px">
+        <label>Cor</label>
+        <input type="color" id="pf-cor" style="width:100%; height:36px; padding:2px; cursor:pointer">
+      </div>
+      <div style="flex:1">
+        <label>Ícone</label>
+        <select id="pf-icone"></select>
+      </div>
+    </div>
     <label>Descrição</label>
     <textarea id="pf-desc" placeholder="Observações, contato, horário..."></textarea>
     <label>Km na rodovia (opcional — sai na prancha)</label>
@@ -338,7 +348,7 @@
 const CORES_REGIOES = {1:"#7391B5", 2:"#74A88E", 3:"#A88BB5", 11:"#C49A6C", 12:"#B57A8A", 13:"#8A9E6B"};
 const CATEGORIAS = {
   pedreira: {label:"Pedreira",          cor:"#57534E", icone:"🪨", plural:"Pedreiras"},
-  cimento:  {label:"Cimento",           cor:"#64748B", icone:"🏭", plural:"Cimento"},
+  cimento:  {label:"Cimento",           cor:"#0891B2", icone:"🏭", plural:"Cimento"},
   canteiro: {label:"Canteiro de obras", cor:"#DC2626", icone:"⛺", plural:"Canteiros de obras"},
   jazida:   {label:"Jazida",            cor:"#B45309", icone:"⛏️", plural:"Jazidas"},
   areial:   {label:"Areial",            cor:"#D97706", icone:"🚜", plural:"Areais"},
@@ -647,7 +657,7 @@ function renderizarTodosFixos(){
           m = L.marker([p.lat, p.lng], {icon:iconeFixo(cat)})
             .bindPopup(() => popupFixoArquivo(p));
         } else {
-          m = L.marker([p.lat, p.lng], {icon:iconeFixo(cat), draggable:true})
+          m = L.marker([p.lat, p.lng], {icon:iconeFixo(cat, p.cor, p.icone), draggable:true})
             .bindPopup(() => popupFixo(p));
           m.on("dragend", () => {
             const ll = m.getLatLng();
@@ -802,11 +812,32 @@ Object.entries(CATEGORIAS).forEach(([k, c]) => {
   selCat.appendChild(o);
 });
 
-function iconeFixo(cat){
+/* ícones que a usuária pode escolher pra um ponto fixo — os das categorias + alguns extras */
+const ICONES_PONTO = [
+  ...Object.values(CATEGORIAS).map(c => ({ic:c.icone, nome:c.label})),
+  {ic:"🚧", nome:"Obra"}, {ic:"🏗️", nome:"Construção"}, {ic:"🧱", nome:"Tijolo"},
+  {ic:"🔧", nome:"Manutenção"}, {ic:"⚙️", nome:"Engrenagem"}, {ic:"🌉", nome:"Ponte"},
+  {ic:"🚩", nome:"Marco"}, {ic:"⭐", nome:"Destaque"}, {ic:"🔥", nome:"Alerta"},
+  {ic:"💧", nome:"Água"}, {ic:"🪵", nome:"Madeira"},
+].filter((v, i, a) => a.findIndex(x => x.ic === v.ic) === i); // sem repetir ícone igual
+const selIcone = document.getElementById("pf-icone");
+ICONES_PONTO.forEach(({ic, nome}) => {
+  const o = document.createElement("option");
+  o.value = ic; o.textContent = `${ic}  ${nome}`;
+  selIcone.appendChild(o);
+});
+selCat.addEventListener("change", () => {
+  const c = CATEGORIAS[selCat.value];
+  document.getElementById("pf-cor").value = c.cor;
+  document.getElementById("pf-icone").value = c.icone;
+});
+
+function iconeFixo(cat, corCustom, iconeCustom){
   const c = CATEGORIAS[cat] || CATEGORIAS.outro;
+  const cor = corCustom || c.cor, icone = iconeCustom || c.icone;
   return L.divIcon({
     className:"",
-    html:`<div class="marcador-fixo" style="background:${c.cor};width:30px;height:30px"><span>${c.icone}</span></div>`,
+    html:`<div class="marcador-fixo" style="background:${cor};width:30px;height:30px"><span>${icone}</span></div>`,
     iconSize:[30,30], iconAnchor:[15,28], popupAnchor:[0,-26],
   });
 }
@@ -814,7 +845,7 @@ function iconeFixo(cat){
 function popupFixo(p){
   const c = CATEGORIAS[p.categoria] || CATEGORIAS.outro;
   const u = paraUTM(p.lat, p.lng);
-  return `<div class="pop-titulo">${c.icone} ${esc(p.nome)}</div>
+  return `<div class="pop-titulo">${p.icone || c.icone} ${esc(p.nome)}</div>
     <div class="pop-info">${c.label}${p.km ? ` · KM ${esc(p.km)}` : ""}</div>
     ${p.descricao ? `<div class="pop-info">${esc(p.descricao)}</div>` : ""}
     <div class="pop-info" style="font-family:monospace">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}<br>
@@ -844,6 +875,9 @@ function abrirModalPonto(id){
   document.getElementById("modal-titulo").textContent = p ? "Editar ponto fixo" : "Novo ponto fixo";
   document.getElementById("pf-nome").value = p ? p.nome : "";
   document.getElementById("pf-categoria").value = p ? p.categoria : "cimento";
+  const cAtual = CATEGORIAS[document.getElementById("pf-categoria").value];
+  document.getElementById("pf-cor").value = (p && p.cor) || cAtual.cor;
+  document.getElementById("pf-icone").value = (p && p.icone) || cAtual.icone;
   document.getElementById("pf-desc").value = p ? (p.descricao || "") : "";
   document.getElementById("pf-km").value = p ? (p.km || "") : "";
   document.getElementById("pf-lat").value = p ? p.lat.toFixed(6) : "";
@@ -886,6 +920,8 @@ function salvarPontoFixo(){
   const dados = {
     nome,
     categoria: document.getElementById("pf-categoria").value,
+    cor: document.getElementById("pf-cor").value,
+    icone: document.getElementById("pf-icone").value,
     descricao: document.getElementById("pf-desc").value.trim(),
     km: document.getElementById("pf-km").value.trim(),
     lat: coords.lat, lng: coords.lng,
@@ -1757,7 +1793,7 @@ function itensLegendaPrancha(){
   pontosFixos.forEach(p => {
     if (ocultosManuais.has(p.id) || !vb.contains([p.lat, p.lng])) return;
     const c = CATEGORIAS[p.categoria] || CATEGORIAS.outro;
-    itens.push({tipo:"ponto", cor:c.cor, rot:p.nome});
+    itens.push({tipo:"ponto", cor:p.cor || c.cor, rot:p.nome});
   });
   const porCat = {};
   fixosArquivo.forEach(p => (porCat[p.categoria] ??= []).push(p));
