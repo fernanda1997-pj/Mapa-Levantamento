@@ -60,7 +60,7 @@ NS = {"k": "http://www.opengis.net/kml/2.2"}
 CATEGORIAS_CHAVE = [
     (r"\bPEDR", "pedreira"), (r"\bCIMENTO", "cimento"), (r"\bCAL\b", "cimento"),
     (r"\bCANTEIRO", "canteiro"), (r"\bJAZIDA", "jazida"), (r"\bUSINA", "usina"),
-    (r"\bAPOIO\b", "apoio"), (r"\bAREI?AL\b", "areial"),
+    (r"\bAPOIO\b", "apoio"), (r"\bAREI?AL\b", "areial"), (r"\bCAE\b", "cae"),
 ]
 
 def sem_acento(txt):
