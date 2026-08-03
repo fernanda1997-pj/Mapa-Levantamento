@@ -381,6 +381,10 @@ const bases = {
   escuro: L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
       {maxZoom:19, attribution:"© CARTO"}),
 };
+/* números/nomes das rodovias por cima do Satélite (a imagem sozinha não tem rótulo nenhum) */
+const rotulosRodovias = L.tileLayer(
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}",
+  {maxZoom:19, attribution:"© Esri"});
 const map = L.map("map", {zoomControl:true, layers:[bases.osm]});
 /* Geoman em modo opt-in: só os desenhos do levantamento são editáveis —
    evita o modo de edição criar milhares de vértices nas regiões/rotas densas
@@ -392,6 +396,8 @@ L.control.scale({imperial:false, position:"bottomleft"}).addTo(map);
 document.getElementById("bases").addEventListener("change", e => {
   Object.values(bases).forEach(b => map.removeLayer(b));
   bases[e.target.value].addTo(map);
+  if (e.target.value === "sat") rotulosRodovias.addTo(map);
+  else map.removeLayer(rotulosRodovias);
 });
 
 /* ================= Regiões ================= */
