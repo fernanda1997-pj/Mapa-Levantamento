@@ -382,16 +382,6 @@ const bases = {
       {maxZoom:19, attribution:"© CARTO"}),
 };
 const map = L.map("map", {zoomControl:true, layers:[bases.osm]});
-/* nomes/números das rodovias por cima do Satélite (só o texto, sem traçado — o traçado
-   é sempre o da rota desenhada por ela), numa pane acima das rotas/áreas mas abaixo dos
-   marcadores e rótulos */
-map.createPane("rotulosRodoviasPane");
-const paneRotulosRodovias = map.getPane("rotulosRodoviasPane");
-paneRotulosRodovias.style.zIndex = 450;
-paneRotulosRodovias.style.pointerEvents = "none";
-const rotulosRodovias = L.tileLayer(
-  "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png",
-  {maxZoom:19, attribution:"© CARTO", pane:"rotulosRodoviasPane"});
 /* Geoman em modo opt-in: só os desenhos do levantamento são editáveis —
    evita o modo de edição criar milhares de vértices nas regiões/rotas densas
    e congelar o navegador */
@@ -402,8 +392,6 @@ L.control.scale({imperial:false, position:"bottomleft"}).addTo(map);
 document.getElementById("bases").addEventListener("change", e => {
   Object.values(bases).forEach(b => map.removeLayer(b));
   bases[e.target.value].addTo(map);
-  if (e.target.value === "sat") rotulosRodovias.addTo(map);
-  else map.removeLayer(rotulosRodovias);
 });
 
 /* ================= Regiões ================= */
