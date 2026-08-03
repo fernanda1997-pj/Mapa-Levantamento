@@ -257,11 +257,15 @@
       <select id="pr-rota" style="flex:1; padding:7px 9px; border:1px solid var(--borda); border-radius:6px; font-size:13px"></select>
       <button class="btn secundario" style="width:auto; padding:8px 14px" onclick="inserirMediaKm()">➕ Inserir</button>
     </div>
+    <div style="margin-top:10px">
+      <button type="button" class="btn secundario" style="width:auto; padding:8px 14px" onclick="enquadrarPrancha()">🔲 Enquadrar rotas e pontos desenhados</button>
+    </div>
     <p class="dica" style="margin-top:10px">Os KM do bloco COORDENADAS são calculados
       automaticamente pela estrada, do ponto de referência (normalmente o canteiro) até cada ponto.
       KM digitado à mão no cadastro do ponto tem prioridade.<br>
-      O enquadramento (zoom) é ajustado sozinho para caber todo o levantamento (pontos e rotas
-      desenhados) antes de gerar. Dica: ative o fundo <b>Satélite</b> antes de gerar.</p>
+      O botão acima ajusta o zoom pra caber tudo que você desenhou — depois é só ajustar
+      manualmente o enquadramento e os pontos fixos visíveis do jeito que quiser antes de gerar.
+      Dica: ative o fundo <b>Satélite</b> antes de gerar.</p>
     <div class="acoes">
       <button class="btn secundario" onclick="document.getElementById('modal-prancha').classList.remove('aberto')">Cancelar</button>
       <button class="btn" id="pr-gerar" onclick="gerarPrancha()">Gerar PNG</button>
@@ -2075,30 +2079,23 @@ const BotaoCoords = L.Control.extend({
   },
 });
 map.addControl(new BotaoCoords());
-/* enquadramento automático da prancha: cabe tudo que entra na prancha — o levantamento
-   (pontos, rotas e áreas desenhados) e os pontos fixos visíveis (manuais e de arquivo) */
+/* limites de tudo que foi desenhado no levantamento (pontos, rotas e áreas) —
+   usado pelo botão "Enquadrar" da prancha */
 function limitesLevantamento(){
   const b = L.latLngBounds([]);
   Object.values(camadasDesenho).forEach(l => {
     if (l.getBounds) b.extend(l.getBounds());
     else if (l.getLatLng) b.extend(l.getLatLng());
   });
-  pontosFixos.forEach(p => { if (!ocultosManuais.has(p.id)) b.extend([p.lat, p.lng]); });
-  fixosArquivo.forEach(p => {
-    const grupo = gruposFixosArquivo[p.categoria];
-    if (grupo && map.hasLayer(grupo) && !ocultosArquivo.has(idArq(p))) b.extend([p.lat, p.lng]);
-  });
   return b.isValid() ? b : null;
 }
-function esperarTiles(timeoutMs = 3000){
-  return new Promise(res => {
-    const ativa = Object.values(bases).find(b => map.hasLayer(b));
-    if (!ativa || !ativa._loading){ res(); return; } // nada pendente: não precisa esperar
-    let acabou = false;
-    const fim = () => { if (!acabou){ acabou = true; ativa.off("load", fim); res(); } };
-    ativa.once("load", fim);
-    setTimeout(fim, timeoutMs);
-  });
+function enquadrarPrancha(){
+  const limites = limitesLevantamento();
+  if (!limites){ aviso("Nada desenhado ainda para enquadrar."); return; }
+  document.getElementById("modal-prancha").classList.remove("aberto");
+  map.fitBounds(limites, {padding:[60, 60], maxZoom:16, animate:false});
+  aviso("Mapa enquadrado nas rotas e pontos desenhados. Ajuste o zoom/posição e os "
+      + "pontos fixos visíveis como quiser, e abra 🖼️ Gerar prancha de novo para continuar.");
 }
 /* afasta rótulos que ficariam sobrepostos na prancha (empurra para baixo até não colidir mais) */
 function evitarSobreposicaoRotulos(){
@@ -2129,26 +2126,6 @@ async function gerarPrancha(){
   const bt = document.getElementById("pr-gerar");
   bt.disabled = true; bt.textContent = "Gerando...";
   try {
-    const titulo = document.getElementById("pr-titulo").value.trim() || "MAPA DE LOCALIZAÇÃO";
-    const sub = document.getElementById("pr-sub").value.trim();
-    const limites = limitesLevantamento();
-    if (limites){
-      // 1ª passada: aproxima o enquadramento pra dar pra saber o tamanho da legenda
-      map.fitBounds(limites, {padding:[50, 50], maxZoom:16, animate:false});
-      await esperarTiles();
-      // reserva o espaço dos quadros fixos (título/legenda em cima, escala+norte+rodapé
-      // embaixo) pra nenhum ponto do levantamento ficar escondido atrás deles
-      const tituloH = sub ? 78 : 58;
-      const itensLeg = itensLegendaPrancha().slice(0, 18);
-      const altItemLeg = it => it.tipo === "sub" ? 18 : 24;
-      const legendaH = 40 + (itensLeg.length ? itensLeg.reduce((a, it) => a + altItemLeg(it), 0) : 24) + 6;
-      const tamMapa = map.getSize();
-      const topoPad = Math.min(Math.max(tituloH, legendaH) + 24, tamMapa.y * .5);
-      const baixoPad = Math.min(110, tamMapa.y * .4);
-      // 2ª passada: enquadramento final com a folga assimétrica
-      map.fitBounds(limites, {paddingTopLeft:[40, topoPad], paddingBottomRight:[40, baixoPad], maxZoom:16, animate:false});
-      await esperarTiles();
-    }
     await carregarScriptExt("https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js", "htmlToImage");
     const coordsProntas = await calcularKmsPrancha(listaCoordenadasPrancha());
     const carregarImg = src => new Promise(res => {
@@ -2172,6 +2149,8 @@ async function gerarPrancha(){
     } finally {
       restaurarRotulos();
     }
+    const titulo = document.getElementById("pr-titulo").value.trim() || "MAPA DE LOCALIZAÇÃO";
+    const sub = document.getElementById("pr-sub").value.trim();
     const memoria = document.getElementById("pr-memoria").value;
     salvar("rta_geoportal_memoria", memoria);
     const page = montarPrancha(mapCv, titulo, sub, logos, coordsProntas, memoria);
