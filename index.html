@@ -2074,6 +2074,31 @@ const BotaoCoords = L.Control.extend({
   },
 });
 map.addControl(new BotaoCoords());
+/* afasta rótulos que ficariam sobrepostos na prancha (empurra para baixo até não colidir mais) */
+function evitarSobreposicaoRotulos(){
+  const itens = Array.from(document.querySelectorAll(".leaflet-tooltip.rotulo-halo"))
+    .filter(el => el.offsetParent !== null)
+    .map(el => ({el, dy:0, rect:el.getBoundingClientRect()}))
+    .sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left);
+  const folga = 3;
+  const sobrepoe = (a, b) => a.left < b.right + folga && a.right > b.left - folga
+                           && a.top < b.bottom + folga && a.bottom > b.top - folga;
+  const colocados = [];
+  for (const it of itens){
+    let r = it.rect;
+    let tentativas = 0;
+    let colisao;
+    while (tentativas < 40 && (colisao = colocados.find(c => sobrepoe(r, c)))){
+      const desloc = colisao.bottom - r.top + folga;
+      it.dy += desloc;
+      r = {left:r.left, right:r.right, top:r.top + desloc, bottom:r.bottom + desloc};
+      tentativas++;
+    }
+    if (it.dy) it.el.style.marginTop = it.dy + "px";
+    colocados.push(r);
+  }
+  return () => itens.forEach(it => { if (it.dy) it.el.style.marginTop = ""; });
+}
 async function gerarPrancha(){
   const bt = document.getElementById("pr-gerar");
   bt.disabled = true; bt.textContent = "Gerando...";
@@ -2088,13 +2113,19 @@ async function gerarPrancha(){
     const logos = await Promise.all([carregarImg("logo/LOGO RTA.png"), carregarImg("logo/LOGO MSI.jpeg")]);
     document.getElementById("modal-prancha").classList.remove("aberto");
     await new Promise(r => setTimeout(r, 120)); // deixa o modal sumir da tela
-    const mapCv = await Promise.race([
-      htmlToImage.toCanvas(map.getContainer(), {
-        skipFonts:true, backgroundColor:"#ffffff", pixelRatio:1,
-        filter: n => !(n.classList && n.classList.contains("leaflet-control-container")),
-      }),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("a captura demorou demais — tente de novo")), 45000)),
-    ]);
+    const restaurarRotulos = evitarSobreposicaoRotulos();
+    let mapCv;
+    try {
+      mapCv = await Promise.race([
+        htmlToImage.toCanvas(map.getContainer(), {
+          skipFonts:true, backgroundColor:"#ffffff", pixelRatio:1,
+          filter: n => !(n.classList && n.classList.contains("leaflet-control-container")),
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("a captura demorou demais — tente de novo")), 45000)),
+      ]);
+    } finally {
+      restaurarRotulos();
+    }
     const titulo = document.getElementById("pr-titulo").value.trim() || "MAPA DE LOCALIZAÇÃO";
     const sub = document.getElementById("pr-sub").value.trim();
     const memoria = document.getElementById("pr-memoria").value;

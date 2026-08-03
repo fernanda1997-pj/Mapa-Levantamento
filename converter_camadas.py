@@ -156,7 +156,8 @@ if shp_cid.exists():
         nome = str(r["NM_IDENTIF"]).strip()
         if not nome or nome.lower() == "nan":
             continue
-        uf = str(r.get("NM_UF") or "").strip()
+        uf_val = r.get("NM_UF")
+        uf = "" if gpd.pd.isna(uf_val) else str(uf_val).strip()
         if uf and uf != "TO":
             nome = f"{nome} ({uf})"
         fixos.append({
