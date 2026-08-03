@@ -260,7 +260,8 @@
     <p class="dica" style="margin-top:10px">Os KM do bloco COORDENADAS são calculados
       automaticamente pela estrada, do ponto de referência (normalmente o canteiro) até cada ponto.
       KM digitado à mão no cadastro do ponto tem prioridade.<br>
-      Dica: ative o fundo <b>Satélite</b> e enquadre a área antes de gerar.</p>
+      O enquadramento (zoom) é ajustado sozinho para caber todo o levantamento (pontos e rotas
+      desenhados) antes de gerar. Dica: ative o fundo <b>Satélite</b> antes de gerar.</p>
     <div class="acoes">
       <button class="btn secundario" onclick="document.getElementById('modal-prancha').classList.remove('aberto')">Cancelar</button>
       <button class="btn" id="pr-gerar" onclick="gerarPrancha()">Gerar PNG</button>
@@ -2074,6 +2075,25 @@ const BotaoCoords = L.Control.extend({
   },
 });
 map.addControl(new BotaoCoords());
+/* enquadramento automático da prancha: cabe todo o levantamento (pontos, rotas e áreas desenhados) */
+function limitesLevantamento(){
+  const b = L.latLngBounds([]);
+  Object.values(camadasDesenho).forEach(l => {
+    if (l.getBounds) b.extend(l.getBounds());
+    else if (l.getLatLng) b.extend(l.getLatLng());
+  });
+  return b.isValid() ? b : null;
+}
+function esperarTiles(timeoutMs = 3000){
+  return new Promise(res => {
+    const ativa = Object.values(bases).find(b => map.hasLayer(b));
+    if (!ativa || !ativa._loading){ res(); return; } // nada pendente: não precisa esperar
+    let acabou = false;
+    const fim = () => { if (!acabou){ acabou = true; ativa.off("load", fim); res(); } };
+    ativa.once("load", fim);
+    setTimeout(fim, timeoutMs);
+  });
+}
 /* afasta rótulos que ficariam sobrepostos na prancha (empurra para baixo até não colidir mais) */
 function evitarSobreposicaoRotulos(){
   const itens = Array.from(document.querySelectorAll(".leaflet-tooltip.rotulo-halo"))
@@ -2103,6 +2123,11 @@ async function gerarPrancha(){
   const bt = document.getElementById("pr-gerar");
   bt.disabled = true; bt.textContent = "Gerando...";
   try {
+    const limites = limitesLevantamento();
+    if (limites){
+      map.fitBounds(limites, {padding:[50, 50], maxZoom:16, animate:false});
+      await esperarTiles();
+    }
     await carregarScriptExt("https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/dist/html-to-image.js", "htmlToImage");
     const coordsProntas = await calcularKmsPrancha(listaCoordenadasPrancha());
     const carregarImg = src => new Promise(res => {
