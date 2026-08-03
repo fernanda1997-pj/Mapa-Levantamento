@@ -2271,30 +2271,6 @@ async function gerarPrancha(){
   bt.disabled = false; bt.textContent = "Gerar PNG";
 }
 
-/* ================= GPS ================= */
-const BotaoGPS = L.Control.extend({
-  options:{position:"topleft"},
-  onAdd(){
-    const d = L.DomUtil.create("div", "leaflet-bar");
-    const a = L.DomUtil.create("a", "", d);
-    a.href = "#"; a.title = "Minha localização (GPS)"; a.textContent = "🛰️";
-    a.style.fontSize = "16px";
-    L.DomEvent.on(a, "click", ev => {
-      L.DomEvent.stop(ev);
-      map.locate({setView:true, maxZoom:16});
-    });
-    return d;
-  },
-});
-map.addControl(new BotaoGPS());
-let marcadorGPS = null;
-map.on("locationfound", ev => {
-  if (marcadorGPS) map.removeLayer(marcadorGPS);
-  marcadorGPS = L.circleMarker(ev.latlng, {radius:8, color:"#2563EB", fillColor:"#60A5FA", fillOpacity:.8})
-    .bindTooltip("Você está aqui").addTo(map);
-});
-map.on("locationerror", () => aviso("Não foi possível obter a localização GPS."));
-
 /* ================= Inicialização ================= */
 renderizarRotasArquivo();
 renderizarTodosFixos();
