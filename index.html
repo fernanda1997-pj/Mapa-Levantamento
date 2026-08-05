@@ -1987,7 +1987,7 @@ function itensLegendaPrancha(){
       itens.push({tipo:"linha", cor, rot:nome + (medida ? ` · ${medida}` : "")});
       if (l._pavRTA && l._pavRTA.chao > 30){
         itens.push({tipo:"sub", cor:"#64748B",
-                    rot:`asfalto ${fmtDist(l._pavRTA.pav)} · estrada de chão ${fmtDist(l._pavRTA.chao)}`});
+                    rot:`PAV ${fmtDist(l._pavRTA.pav)} · N PAV ${fmtDist(l._pavRTA.chao)}`});
         if (l._pavRTA.segs?.length) temChao = true;
       }
     }
