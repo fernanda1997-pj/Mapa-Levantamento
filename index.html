@@ -305,15 +305,18 @@
         Distância manual (opcional — sobrescreve o cálculo automático na legenda e na média)</label>
       <input type="text" id="mini-distancia" placeholder="Ex.: 34,90 km">
     </div>
-    <div id="mini-coords-wrap" style="display:none; gap:8px; margin-top:8px">
-      <div style="flex:1">
-        <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:3px">Latitude</label>
-        <input type="number" step="any" id="mini-lat" placeholder="-10.184">
+    <div id="mini-coords-wrap" style="display:none; flex-direction:column; gap:8px; margin-top:8px">
+      <div style="display:flex; gap:8px">
+        <div style="flex:1">
+          <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:3px">Latitude</label>
+          <input type="text" id="mini-lat" placeholder="-10.184 ou 10°11'02.4&quot;S">
+        </div>
+        <div style="flex:1">
+          <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:3px">Longitude</label>
+          <input type="text" id="mini-lng" placeholder="-48.333 ou 48°19'58.8&quot;O">
+        </div>
       </div>
-      <div style="flex:1">
-        <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:3px">Longitude</label>
-        <input type="number" step="any" id="mini-lng" placeholder="-48.333">
-      </div>
+      <p class="dica" style="margin:0">Aceita decimal (-10.184) ou grau/min/seg (10°11'02.4"S).</p>
     </div>
     <div class="acoes">
       <button class="btn secundario" id="mini-cancelar">Cancelar</button>
@@ -540,8 +543,8 @@ function dialogoNomeDesenho(titulo, valorInicial, opts, cb){
     cor: document.getElementById("mini-cor").value,
     icone: comIcone ? document.getElementById("mini-icone").value : undefined,
     distancia: comDistancia ? document.getElementById("mini-distancia").value.trim() : undefined,
-    lat: comCoords ? parseFloat(document.getElementById("mini-lat").value) : undefined,
-    lng: comCoords ? parseFloat(document.getElementById("mini-lng").value) : undefined,
+    lat: comCoords ? parseCoordDMS(document.getElementById("mini-lat").value) : undefined,
+    lng: comCoords ? parseCoordDMS(document.getElementById("mini-lng").value) : undefined,
   });
   document.getElementById("modal-mini").classList.add("aberto");
   setTimeout(() => { inp.focus(); inp.select(); }, 50);
@@ -566,6 +569,24 @@ document.getElementById("mini-cancelar").addEventListener("click", () => {
 document.getElementById("mini-input").addEventListener("keydown", ev => {
   if (ev.key === "Enter") document.getElementById("mini-ok").click();
 });
+/* aceita coordenada em decimal ("-10.184") ou grau/min/seg ("10°11'02.4\"S"/"48°19'58.8\"O") */
+function parseCoordDMS(txt){
+  if (!txt) return NaN;
+  let t = String(txt).trim();
+  if (!t) return NaN;
+  let sinal = 1;
+  const hemi = t.match(/[NSEOW]$/i);
+  if (hemi){
+    sinal = /[SOW]/i.test(hemi[0]) ? -1 : 1;
+    t = t.slice(0, -1).trim();
+  } else if (t.startsWith("-")){
+    sinal = -1;
+  }
+  const nums = (t.match(/\d+(?:[.,]\d+)?/g) || []).map(n => parseFloat(n.replace(",", ".")));
+  if (!nums.length) return NaN;
+  const [grau = 0, min = 0, seg = 0] = nums;
+  return sinal * (grau + min / 60 + seg / 3600);
+}
 let toastTimer = null;
 function aviso(msg){
   const t = document.getElementById("toast");
