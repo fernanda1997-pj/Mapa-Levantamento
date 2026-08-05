@@ -305,6 +305,16 @@
         Distância manual (opcional — sobrescreve o cálculo automático na legenda e na média)</label>
       <input type="text" id="mini-distancia" placeholder="Ex.: 34,90 km">
     </div>
+    <div id="mini-coords-wrap" style="display:none; gap:8px; margin-top:8px">
+      <div style="flex:1">
+        <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:3px">Latitude</label>
+        <input type="number" step="any" id="mini-lat" placeholder="-10.184">
+      </div>
+      <div style="flex:1">
+        <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:3px">Longitude</label>
+        <input type="number" step="any" id="mini-lng" placeholder="-48.333">
+      </div>
+    </div>
     <div class="acoes">
       <button class="btn secundario" id="mini-cancelar">Cancelar</button>
       <button class="btn" id="mini-ok">OK</button>
@@ -506,11 +516,11 @@ function dialogoNome(titulo, valorInicial, cb){
   document.getElementById("modal-mini").classList.add("aberto");
   setTimeout(() => { inp.focus(); inp.select(); }, 50);
 }
-/* igual ao dialogoNome, mas com a cor do desenho — e ícone (se for ponto) ou distância
-   manual (se for rota) — usado ao desenhar/renomear qualquer elemento do levantamento.
-   opts: {cor, icone, comIcone, distancia, comDistancia} */
+/* igual ao dialogoNome, mas com a cor do desenho — e ícone/coordenadas (se for ponto)
+   ou distância manual (se for rota) — usado ao desenhar/renomear qualquer elemento do
+   levantamento. opts: {cor, icone, comIcone, distancia, comDistancia, lat, lng, comCoords} */
 function dialogoNomeDesenho(titulo, valorInicial, opts, cb){
-  const {cor, icone, comIcone, distancia, comDistancia} = opts;
+  const {cor, icone, comIcone, distancia, comDistancia, lat, lng, comCoords} = opts;
   document.getElementById("mini-titulo").textContent = titulo;
   const inp = document.getElementById("mini-input");
   inp.style.display = "block"; inp.value = valorInicial || "";
@@ -521,10 +531,17 @@ function dialogoNomeDesenho(titulo, valorInicial, opts, cb){
   if (comIcone) document.getElementById("mini-icone").value = icone || "";
   document.getElementById("mini-distancia-wrap").style.display = comDistancia ? "" : "none";
   if (comDistancia) document.getElementById("mini-distancia").value = distancia || "";
+  document.getElementById("mini-coords-wrap").style.display = comCoords ? "flex" : "none";
+  if (comCoords){
+    document.getElementById("mini-lat").value = lat != null ? lat.toFixed(6) : "";
+    document.getElementById("mini-lng").value = lng != null ? lng.toFixed(6) : "";
+  }
   miniCallback = () => cb(inp.value.trim(), {
     cor: document.getElementById("mini-cor").value,
     icone: comIcone ? document.getElementById("mini-icone").value : undefined,
     distancia: comDistancia ? document.getElementById("mini-distancia").value.trim() : undefined,
+    lat: comCoords ? parseFloat(document.getElementById("mini-lat").value) : undefined,
+    lng: comCoords ? parseFloat(document.getElementById("mini-lng").value) : undefined,
   });
   document.getElementById("modal-mini").classList.add("aberto");
   setTimeout(() => { inp.focus(); inp.select(); }, 50);
@@ -1219,6 +1236,7 @@ function registrarDesenho(layer, nome){
     aplicarRotulo(layer, nome, layer._iconeRTA ? [13, -18] : [10, 0]);
   }
   layer.bindPopup(() => popupDesenho(layer));
+  if (layer instanceof L.Marker) integrarMarcadorRota(layer); // dá pra clicar nele pra usar como ponto exato da rota
   layer.on("pm:edit pm:dragend pm:markerdragend", () => {
     if (!(layer instanceof L.Marker) && layer._pavRTA){
       layer._pavRTA = null; // geometria mudou: análise de pavimento fica desatualizada
@@ -1390,9 +1408,11 @@ function renomearDesenho(id){
   const distanciaAtual = (ehRota && l._medidaManualRTA)
     ? (l._medidaManualRTA / 1000).toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2})
     : "";
+  const pos = ehMarcador ? l.getLatLng() : null;
   dialogoNomeDesenho(titulo, l._nomeRTA || "", {
     cor: l._corRTA, icone: l._iconeRTA, comIcone: ehMarcador,
     distancia: distanciaAtual, comDistancia: ehRota,
+    lat: pos && pos.lat, lng: pos && pos.lng, comCoords: ehMarcador,
   }, (nome, dados) => {
     if (nome) l._nomeRTA = nome;
     l._corRTA = dados.cor;
@@ -1400,6 +1420,7 @@ function renomearDesenho(id){
       l._iconeRTA = dados.icone || undefined;
       l.setIcon(iconeDesenho(l._corRTA, l._iconeRTA));
       aplicarRotulo(l, l._nomeRTA || "", l._iconeRTA ? [13, -18] : [10, 0]);
+      if (!isNaN(dados.lat) && !isNaN(dados.lng)) l.setLatLng([dados.lat, dados.lng]);
     } else {
       if (l.setStyle) l.setStyle({color: l._corRTA});
       if (ehRota) l._medidaManualRTA = parseDistanciaManualM(dados.distancia) || undefined;
@@ -1426,13 +1447,16 @@ map.on("pm:create", ev => {
   registrarDesenho(layer, sugestao);
   salvarDesenhos();
   if (layer instanceof L.Marker){
-    dialogoNomeDesenho(`Nome, cor e ícone (${tipo})`, sugestao,
-      {cor: layer._corRTA, icone: layer._iconeRTA, comIcone: true}, (nome, dados) => {
+    const pos = layer.getLatLng();
+    dialogoNomeDesenho(`Nome, cor, ícone e coordenada (${tipo})`, sugestao,
+      {cor: layer._corRTA, icone: layer._iconeRTA, comIcone: true,
+       lat: pos.lat, lng: pos.lng, comCoords: true}, (nome, dados) => {
       if (nome) layer._nomeRTA = nome;
       layer._corRTA = dados.cor;
       layer._iconeRTA = dados.icone || undefined;
       layer.setIcon(iconeDesenho(layer._corRTA, layer._iconeRTA));
       aplicarRotulo(layer, layer._nomeRTA, layer._iconeRTA ? [13, -18] : [10, 0]);
+      if (!isNaN(dados.lat) && !isNaN(dados.lng)) layer.setLatLng([dados.lat, dados.lng]);
       salvarDesenhos();
     });
     return;
