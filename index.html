@@ -2091,7 +2091,7 @@ function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas, memoria){
   itens.forEach(it => {
     const h = altItem(it), sx = lx + 16, sy = yAcc + h * .4;
     if (it.tipo === "sub"){
-      texto(it.rot, sx + 40, sy + 11 * .35, "italic 11.5px Segoe UI, Arial", it.cor || "#64748B");
+      texto(it.rot, sx + 40, sy + legFS * .35, "italic " + legFS + "px Segoe UI, Arial", it.cor || "#64748B");
       yAcc += h;
       return;
     }
