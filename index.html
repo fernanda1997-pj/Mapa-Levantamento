@@ -300,6 +300,11 @@
         <select id="mini-icone"></select>
       </div>
     </div>
+    <div id="mini-distancia-wrap" style="display:none; margin-top:8px">
+      <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:3px">
+        Distância manual (opcional — sobrescreve o cálculo automático na legenda e na média)</label>
+      <input type="text" id="mini-distancia" placeholder="Ex.: 34,90 km">
+    </div>
     <div class="acoes">
       <button class="btn secundario" id="mini-cancelar">Cancelar</button>
       <button class="btn" id="mini-ok">OK</button>
@@ -501,19 +506,26 @@ function dialogoNome(titulo, valorInicial, cb){
   document.getElementById("modal-mini").classList.add("aberto");
   setTimeout(() => { inp.focus(); inp.select(); }, 50);
 }
-/* igual ao dialogoNome, mas com a cor do desenho — e o ícone também, se for ponto
-   (usado ao desenhar/renomear qualquer elemento do levantamento) */
-function dialogoNomeDesenho(titulo, valorInicial, corInicial, iconeInicial, comIcone, cb){
+/* igual ao dialogoNome, mas com a cor do desenho — e ícone (se for ponto) ou distância
+   manual (se for rota) — usado ao desenhar/renomear qualquer elemento do levantamento.
+   opts: {cor, icone, comIcone, distancia, comDistancia} */
+function dialogoNomeDesenho(titulo, valorInicial, opts, cb){
+  const {cor, icone, comIcone, distancia, comDistancia} = opts;
   document.getElementById("mini-titulo").textContent = titulo;
   const inp = document.getElementById("mini-input");
   inp.style.display = "block"; inp.value = valorInicial || "";
   document.getElementById("mini-texto").style.display = "none";
   document.getElementById("mini-cor-icone").style.display = "flex";
   document.getElementById("mini-icone-wrap").style.display = comIcone ? "" : "none";
-  document.getElementById("mini-cor").value = corInicial;
-  if (comIcone) document.getElementById("mini-icone").value = iconeInicial || "";
-  miniCallback = () => cb(inp.value.trim(), document.getElementById("mini-cor").value,
-                          comIcone ? document.getElementById("mini-icone").value : undefined);
+  document.getElementById("mini-cor").value = cor;
+  if (comIcone) document.getElementById("mini-icone").value = icone || "";
+  document.getElementById("mini-distancia-wrap").style.display = comDistancia ? "" : "none";
+  if (comDistancia) document.getElementById("mini-distancia").value = distancia || "";
+  miniCallback = () => cb(inp.value.trim(), {
+    cor: document.getElementById("mini-cor").value,
+    icone: comIcone ? document.getElementById("mini-icone").value : undefined,
+    distancia: comDistancia ? document.getElementById("mini-distancia").value.trim() : undefined,
+  });
   document.getElementById("modal-mini").classList.add("aberto");
   setTimeout(() => { inp.focus(); inp.select(); }, 50);
 }
@@ -552,6 +564,14 @@ function distanciaMetros(latlngs){
   return d;
 }
 const fmtDist = m => m < 1000 ? m.toFixed(0) + " m" : (m/1000).toFixed(2) + " km";
+/* distância manual digitada por ela (em KM, vírgula decimal) -> metros; null se vazia/inválida */
+function parseDistanciaManualM(texto){
+  if (!texto) return null;
+  const limpo = String(texto).trim().toLowerCase().replace(/\s*km\s*$/, "").trim();
+  if (!limpo) return null;
+  const num = parseFloat(limpo.replace(/\./g, "").replace(",", "."));
+  return (!isNaN(num) && num > 0) ? num * 1000 : null;
+}
 
 function areaM2(latlngs){ // shoelace em UTM (aprox. boa para escala de obra)
   if (latlngs.length < 3) return 0;
@@ -1146,7 +1166,7 @@ function infoGeom(layer){
     return {tipo:"Área", medida:fmtArea(a)};
   }
   if (layer instanceof L.Polyline){
-    const d = distanciaMetros(layer.getLatLngs());
+    const d = layer._medidaManualRTA || distanciaMetros(layer.getLatLngs());
     return {tipo:"Rota", medida:fmtDist(d)};
   }
   return {tipo:"Elemento", medida:""};
@@ -1158,7 +1178,7 @@ function popupDesenho(layer){
   const pav = layer._pavRTA;
   const ehLinha = !(layer instanceof L.Marker);
   return `<div class="pop-titulo">${esc(nome)}</div>
-    <div class="pop-info">${tipo}${medida ? " · " + medida : ""}</div>
+    <div class="pop-info">${tipo}${medida ? " · " + medida : ""}${layer._medidaManualRTA ? " (manual)" : ""}</div>
     ${pav ? `<div class="pop-info">🛣️ Pavimentado: ${fmtDist(pav.pav)} · 🟤 Estrada de chão: ${fmtDist(pav.chao)}</div>` : ""}
     <div class="pop-acoes">
       ${ehLinha && !pav ? `<button onclick="analisarPavimentoDesenho('${layer._idRTA}')">🛞 Pavimento</button>` : ""}
@@ -1218,6 +1238,7 @@ function salvarDesenhos(){
   Object.values(camadasDesenho).forEach(l => {
     const f = l.toGeoJSON();
     f.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "", icone:l._iconeRTA || "",
+                    medidaManual:l._medidaManualRTA || null,
                     legs:l._legsRTA || null, pav:l._pavRTA || null,
                     waypoints:l._waypointsRTA || null, origem:"levantamento"};
     fc.features.push(f);
@@ -1255,9 +1276,10 @@ function renderizarListaDesenhos(){
     linha.className = "linha-camada";
     linha.innerHTML = `
       <span style="font-size:13px">${ic}</span>
-      <span class="nome">${esc(l._nomeRTA || "(sem nome)")}${medida ? ` <small style="color:#64748B">· ${medida}</small>` : ""}</span>
+      <span class="nome">${esc(l._nomeRTA || "(sem nome)")}${medida ? ` <small style="color:#64748B">· ${medida}${l._medidaManualRTA ? " (manual)" : ""}</small>` : ""}</span>
+      ${l._waypointsRTA?.length ? `<button title="Alterar o caminho da rota" onclick="reabrirRota('${l._idRTA}')">🔁</button>` : ""}
       <button title="Baixar GeoJSON" onclick="baixarDesenho('${l._idRTA}')">⬇️</button>
-      <button title="Renomear" onclick="renomearDesenho('${l._idRTA}')">✏️</button>
+      <button title="Renomear/cor" onclick="renomearDesenho('${l._idRTA}')">✏️</button>
       <button title="Excluir" onclick="excluirDesenho('${l._idRTA}')">🗑️</button>`;
     linha.querySelector(".nome").addEventListener("click", () => {
       if (l.getBounds) map.fitBounds(l.getBounds(), {padding:[40,40], maxZoom:16});
@@ -1277,6 +1299,7 @@ function kmlDeDesenhos(camadas, nomeDoc){
   camadas.forEach(l => {
     const nome = escXml(l._nomeRTA || "(sem nome)");
     const props = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "", icone:l._iconeRTA || "",
+                   medidaManual:l._medidaManualRTA || null,
                    legs:l._legsRTA || null, pav:l._pavRTA || null,
                    waypoints:l._waypointsRTA || null, origem:"levantamento"};
     const ext = `<ExtendedData><Data name="geoportal"><value>${escXml(JSON.stringify(props))}</value></Data></ExtendedData>`;
@@ -1345,6 +1368,7 @@ function importarKmlLevantamento(texto){
     layer._idRTA = props.id || novoId();
     if (props.cor) layer._corRTA = props.cor;
     if (props.icone) layer._iconeRTA = props.icone;
+    if (props.medidaManual) layer._medidaManualRTA = props.medidaManual;
     if (props.legs) layer._legsRTA = props.legs;
     if (props.pav) layer._pavRTA = props.pav;
     if (props.waypoints) layer._waypointsRTA = props.waypoints;
@@ -1359,16 +1383,26 @@ function renomearDesenho(id){
   const l = camadasDesenho[id];
   if (!l) return;
   const ehMarcador = l instanceof L.Marker;
-  const titulo = ehMarcador ? "Nome, cor e ícone do ponto" : "Nome e cor da linha";
-  dialogoNomeDesenho(titulo, l._nomeRTA || "", l._corRTA, l._iconeRTA, ehMarcador, (nome, cor, icone) => {
+  const ehArea = l instanceof L.Polygon;
+  const ehRota = !ehMarcador && !ehArea;
+  const titulo = ehMarcador ? "Nome, cor e ícone do ponto"
+               : ehRota ? "Nome, cor e distância da rota" : "Nome e cor da área";
+  const distanciaAtual = (ehRota && l._medidaManualRTA)
+    ? (l._medidaManualRTA / 1000).toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2})
+    : "";
+  dialogoNomeDesenho(titulo, l._nomeRTA || "", {
+    cor: l._corRTA, icone: l._iconeRTA, comIcone: ehMarcador,
+    distancia: distanciaAtual, comDistancia: ehRota,
+  }, (nome, dados) => {
     if (nome) l._nomeRTA = nome;
-    l._corRTA = cor;
+    l._corRTA = dados.cor;
     if (ehMarcador){
-      l._iconeRTA = icone || undefined;
+      l._iconeRTA = dados.icone || undefined;
       l.setIcon(iconeDesenho(l._corRTA, l._iconeRTA));
       aplicarRotulo(l, l._nomeRTA || "", l._iconeRTA ? [13, -18] : [10, 0]);
-    } else if (l.setStyle){
-      l.setStyle({color: l._corRTA});
+    } else {
+      if (l.setStyle) l.setStyle({color: l._corRTA});
+      if (ehRota) l._medidaManualRTA = parseDistanciaManualM(dados.distancia) || undefined;
     }
     l.closePopup();
     salvarDesenhos();
@@ -1392,10 +1426,11 @@ map.on("pm:create", ev => {
   registrarDesenho(layer, sugestao);
   salvarDesenhos();
   if (layer instanceof L.Marker){
-    dialogoNomeDesenho(`Nome, cor e ícone (${tipo})`, sugestao, layer._corRTA, layer._iconeRTA, true, (nome, cor, icone) => {
+    dialogoNomeDesenho(`Nome, cor e ícone (${tipo})`, sugestao,
+      {cor: layer._corRTA, icone: layer._iconeRTA, comIcone: true}, (nome, dados) => {
       if (nome) layer._nomeRTA = nome;
-      layer._corRTA = cor;
-      layer._iconeRTA = icone || undefined;
+      layer._corRTA = dados.cor;
+      layer._iconeRTA = dados.icone || undefined;
       layer.setIcon(iconeDesenho(layer._corRTA, layer._iconeRTA));
       aplicarRotulo(layer, layer._nomeRTA, layer._iconeRTA ? [13, -18] : [10, 0]);
       salvarDesenhos();
@@ -1417,6 +1452,7 @@ function carregarDesenhos(){
         layer._idRTA = feat.properties?.id || novoId();
         if (feat.properties?.cor) layer._corRTA = feat.properties.cor;
         if (feat.properties?.icone) layer._iconeRTA = feat.properties.icone;
+        if (feat.properties?.medidaManual) layer._medidaManualRTA = feat.properties.medidaManual;
         if (feat.properties?.legs) layer._legsRTA = feat.properties.legs;
         if (feat.properties?.pav) layer._pavRTA = feat.properties.pav;
         if (feat.properties?.waypoints) layer._waypointsRTA = feat.properties.waypoints;
@@ -1563,6 +1599,7 @@ document.getElementById("arquivo-importar").addEventListener("change", ev => {
             layer._idRTA = p.id || novoId();
             if (p.cor) layer._corRTA = p.cor;
             if (p.icone) layer._iconeRTA = p.icone;
+            if (p.medidaManual) layer._medidaManualRTA = p.medidaManual;
             if (p.legs) layer._legsRTA = p.legs;
             if (p.pav) layer._pavRTA = p.pav;
             if (p.waypoints) layer._waypointsRTA = p.waypoints;
@@ -1847,7 +1884,9 @@ async function inserirMediaKm(){
     const l = camadasDesenho[idRota];
     if (!l){ aviso("Rota não encontrada."); return; }
     let totalM;
-    if (l._legsRTA && l._legsRTA.length){
+    if (l._medidaManualRTA){
+      totalM = l._medidaManualRTA; // ela digitou a distância (ex.: pra bater com a planilha)
+    } else if (l._legsRTA && l._legsRTA.length){
       totalM = l._legsRTA.reduce((a, b) => a + b, 0); // extensão real pela estrada
     } else {
       const lls = l.getLatLngs();
