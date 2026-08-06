@@ -636,6 +636,19 @@ function parseDistanciaManualM(texto){
 function pavEfetivo(layer){
   return layer._pavManualRTA || layer._pavRTA || null;
 }
+/* recalcula pav/chão manuais a partir dos trechos marcados no mapa (_pavSegsManualRTA):
+   soma o que foi marcado chão e asfaltado; o que não foi marcado conta como asfaltado */
+function recomputarPavManual(layer){
+  const lls = layer.getLatLngs();
+  const totalM = layer._medidaManualRTA || distanciaMetros(Array.isArray(lls[0]) ? lls.flat() : lls);
+  let chaoM = 0, asfaltoMarcadoM = 0;
+  (layer._pavSegsManualRTA || []).forEach(s => {
+    const d = distanciaMetros(s.coords.map(c => L.latLng(c[0], c[1])));
+    if (s.tipo === "chao") chaoM += d; else asfaltoMarcadoM += d;
+  });
+  const restoM = Math.max(0, totalM - chaoM - asfaltoMarcadoM);
+  layer._pavManualRTA = {pav: Math.round(asfaltoMarcadoM + restoM), chao: Math.round(chaoM)};
+}
 
 function areaM2(latlngs){ // shoelace em UTM (aprox. boa para escala de obra)
   if (latlngs.length < 3) return 0;
@@ -1159,7 +1172,10 @@ function removerChao(id){
 }
 function renderizarChao(layer){
   removerChao(layer._idRTA);
-  const segs = layer._pavRTA?.segs;
+  // se ela marcou trechos na mão, isso manda mais que a detecção automática
+  const segs = layer._pavSegsManualRTA?.length
+    ? layer._pavSegsManualRTA.filter(s => s.tipo === "chao").map(s => s.coords)
+    : layer._pavRTA?.segs;
   if (!segs || !segs.length) return;
   overlaysChao[layer._idRTA] = L.layerGroup(segs.map(s =>
     L.polyline(s, {color:"#7C4A03", weight:5, dashArray:"7,7", opacity:.95, interactive:false})
@@ -1223,6 +1239,114 @@ async function analisarPavimentoDesenho(id){
   }
 }
 
+/* ===== marcar pavimento clicando 2 pontos na própria rota ===== */
+let marcacaoPav = null; // {id, idxIni, marcadores[], trecho, distM}
+let bannerMarcacaoPav = null;
+function bannerMarcacaoPavHtml(){
+  const btn = (id, rotulo, estilo) =>
+    `<button id="${id}" style="flex:1; padding:5px 7px; border-radius:5px; cursor:pointer; white-space:nowrap; ${estilo}">${rotulo}</button>`;
+  if (marcacaoPav.trecho){
+    return `<b>📍 Marcar trecho</b><br>Trecho de <b>${fmtDist(marcacaoPav.distM)}</b> — marcar como:
+      <div style="display:flex; gap:5px; margin-top:6px">
+        ${btn("marc-pav-chao", "🟤 Chão", "border:none; background:#7C4A03; color:#fff; font-weight:700")}
+        ${btn("marc-pav-asfalto", "⚫ Asfaltado", "border:none; background:#1f2937; color:#fff; font-weight:700")}
+      </div>
+      <div style="margin-top:5px">${btn("marc-pav-cancelar", "✖ Cancelar", "border:1px solid #fff; background:transparent; color:#fff")}</div>`;
+  }
+  const passo = marcacaoPav.idxIni == null
+    ? "Clique no <b>início</b> do trecho a corrigir, em cima da linha da rota."
+    : "Agora clique no <b>fim</b> do trecho.";
+  return `<b>📍 Marcar trecho</b><br>${passo}
+    <div style="display:flex; gap:5px; margin-top:6px">${btn("marc-pav-cancelar", "✖ Cancelar", "border:1px solid #fff; background:transparent; color:#fff")}</div>`;
+}
+function atualizarBannerMarcacaoPav(){
+  if (!bannerMarcacaoPav) return;
+  bannerMarcacaoPav.getContainer().innerHTML = bannerMarcacaoPavHtml();
+  const ligar = (id, fn) => {
+    const b = document.getElementById(id);
+    if (b) L.DomEvent.on(b, "click", ev => { L.DomEvent.stop(ev); fn(); });
+  };
+  ligar("marc-pav-cancelar", encerrarMarcacaoPavimento);
+  ligar("marc-pav-chao", () => confirmarTrechoPavimento("chao"));
+  ligar("marc-pav-asfalto", () => confirmarTrechoPavimento("asfalto"));
+}
+function iniciarMarcacaoPavimento(id){
+  const l = camadasDesenho[id];
+  if (!l || l instanceof L.Marker || l instanceof L.Polygon) return;
+  map.closePopup();
+  l.unbindPopup(); // evita abrir o balão enquanto ela clica pra marcar
+  marcacaoPav = {id, idxIni: null, marcadores: []};
+  l.on("click", cliqueMarcacaoPavimento);
+  map.getContainer().style.cursor = "crosshair";
+  bannerMarcacaoPav = L.control({position:"topright"});
+  bannerMarcacaoPav.onAdd = () => {
+    const d = L.DomUtil.create("div");
+    d.style.cssText = "background:#1E3A72;color:#fff;padding:9px 12px;border-radius:8px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.4);max-width:240px;line-height:1.45";
+    L.DomEvent.disableClickPropagation(d);
+    return d;
+  };
+  bannerMarcacaoPav.addTo(map);
+  atualizarBannerMarcacaoPav();
+  aviso("Clique no início e no fim do trecho que você quer corrigir.");
+}
+function nearestVertexIdx(pontos, latlng){
+  let melhorIdx = 0, melhorD = Infinity;
+  pontos.forEach((p, i) => {
+    const d = map.distance(p, latlng);
+    if (d < melhorD){ melhorD = d; melhorIdx = i; }
+  });
+  return melhorIdx;
+}
+function cliqueMarcacaoPavimento(ev){
+  L.DomEvent.stop(ev);
+  if (!marcacaoPav) return;
+  const l = camadasDesenho[marcacaoPav.id];
+  if (!l){ encerrarMarcacaoPavimento(); return; }
+  const lls = l.getLatLngs();
+  const pontos = Array.isArray(lls[0]) ? lls.flat() : lls;
+  const idx = nearestVertexIdx(pontos, ev.latlng);
+  if (marcacaoPav.idxIni != null && idx === marcacaoPav.idxIni){
+    aviso("Clique num ponto diferente do início.");
+    return;
+  }
+  const marcador = L.circleMarker(pontos[idx],
+    {radius:6, color:"#1E3A72", fillColor:"#fff", fillOpacity:1, weight:2, interactive:false}).addTo(map);
+  marcacaoPav.marcadores.push(marcador);
+  if (marcacaoPav.idxIni == null){
+    marcacaoPav.idxIni = idx;
+  } else {
+    const i1 = Math.min(marcacaoPav.idxIni, idx), i2 = Math.max(marcacaoPav.idxIni, idx);
+    marcacaoPav.trecho = pontos.slice(i1, i2 + 1);
+    marcacaoPav.distM = distanciaMetros(marcacaoPav.trecho);
+  }
+  atualizarBannerMarcacaoPav();
+}
+function confirmarTrechoPavimento(tipo){
+  const l = camadasDesenho[marcacaoPav.id];
+  if (l && marcacaoPav.trecho){
+    const coords = marcacaoPav.trecho.map(p => [p.lat, p.lng]);
+    if (!l._pavSegsManualRTA) l._pavSegsManualRTA = [];
+    l._pavSegsManualRTA.push({coords, tipo});
+    recomputarPavManual(l);
+    renderizarChao(l);
+    salvarDesenhos();
+    aviso(`Trecho de ${fmtDist(marcacaoPav.distM)} marcado como ${tipo === "chao" ? "estrada de chão" : "asfaltado"}.`);
+  }
+  encerrarMarcacaoPavimento();
+}
+function encerrarMarcacaoPavimento(){
+  if (!marcacaoPav) return;
+  const l = camadasDesenho[marcacaoPav.id];
+  if (l){
+    l.off("click", cliqueMarcacaoPavimento);
+    l.bindPopup(() => popupDesenho(l));
+  }
+  marcacaoPav.marcadores.forEach(m => map.removeLayer(m));
+  if (bannerMarcacaoPav){ map.removeControl(bannerMarcacaoPav); bannerMarcacaoPav = null; }
+  map.getContainer().style.cursor = "";
+  marcacaoPav = null;
+}
+
 function infoGeom(layer){
   if (layer instanceof L.Marker) return {tipo:"Ponto", medida:""};
   if (layer instanceof L.Polygon){
@@ -1244,11 +1368,13 @@ function popupDesenho(layer){
   const {tipo, medida} = infoGeom(layer);
   const pav = pavEfetivo(layer);
   const ehLinha = !(layer instanceof L.Marker);
+  const ehRota = ehLinha && !(layer instanceof L.Polygon);
   return `<div class="pop-titulo">${esc(nome)}</div>
     <div class="pop-info">${tipo}${medida ? " · " + medida : ""}${layer._medidaManualRTA ? " (manual)" : ""}</div>
     ${pav ? `<div class="pop-info">🛣️ Pavimentado: ${fmtDist(pav.pav)} · 🟤 Estrada de chão: ${fmtDist(pav.chao)}${layer._pavManualRTA ? " (manual)" : ""}</div>` : ""}
     <div class="pop-acoes">
       ${ehLinha && !layer._pavRTA ? `<button onclick="analisarPavimentoDesenho('${layer._idRTA}')">🛞 Pavimento</button>` : ""}
+      ${ehRota ? `<button title="Marcar um trecho no mapa como asfalto ou chão" onclick="iniciarMarcacaoPavimento('${layer._idRTA}')">📍 Marcar trecho</button>` : ""}
       ${layer._waypointsRTA?.length ? `<button title="Reabrir para alterar" onclick="reabrirRota('${layer._idRTA}')">🔁 Alterar rota</button>` : ""}
       <button title="Baixar GeoJSON" onclick="baixarDesenho('${layer._idRTA}')">⬇️ Baixar</button>
       <button onclick="renomearDesenho('${layer._idRTA}')">✏️ Renomear</button>
@@ -1307,6 +1433,7 @@ function salvarDesenhos(){
     const f = l.toGeoJSON();
     f.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "", icone:l._iconeRTA || "",
                     medidaManual:l._medidaManualRTA || null, pavManual:l._pavManualRTA || null,
+                    pavSegs:l._pavSegsManualRTA || null,
                     legs:l._legsRTA || null, pav:l._pavRTA || null,
                     waypoints:l._waypointsRTA || null, origem:"levantamento"};
     fc.features.push(f);
@@ -1368,6 +1495,7 @@ function kmlDeDesenhos(camadas, nomeDoc){
     const nome = escXml(l._nomeRTA || "(sem nome)");
     const props = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "", icone:l._iconeRTA || "",
                    medidaManual:l._medidaManualRTA || null, pavManual:l._pavManualRTA || null,
+                   pavSegs:l._pavSegsManualRTA || null,
                    legs:l._legsRTA || null, pav:l._pavRTA || null,
                    waypoints:l._waypointsRTA || null, origem:"levantamento"};
     const ext = `<ExtendedData><Data name="geoportal"><value>${escXml(JSON.stringify(props))}</value></Data></ExtendedData>`;
@@ -1438,11 +1566,12 @@ function importarKmlLevantamento(texto){
     if (props.icone) layer._iconeRTA = props.icone;
     if (props.medidaManual) layer._medidaManualRTA = props.medidaManual;
     if (props.pavManual) layer._pavManualRTA = props.pavManual;
+    if (props.pavSegs) layer._pavSegsManualRTA = props.pavSegs;
     if (props.legs) layer._legsRTA = props.legs;
     if (props.pav) layer._pavRTA = props.pav;
     if (props.waypoints) layer._waypointsRTA = props.waypoints;
     registrarDesenho(layer, nome);
-    if (layer._pavRTA) renderizarChao(layer);
+    if (layer._pavRTA || layer._pavSegsManualRTA?.length) renderizarChao(layer);
     n++;
   });
   salvarDesenhos();
@@ -1478,9 +1607,24 @@ function renomearDesenho(id){
       if (l.setStyle) l.setStyle({color: l._corRTA});
       if (ehRota){
         l._medidaManualRTA = parseDistanciaManualM(dados.distancia) || undefined;
+        const pavAntes = l._pavManualRTA;
         const pavM = parseDistanciaManualM(dados.pav);
         const chaoM = parseDistanciaManualM(dados.chao);
-        l._pavManualRTA = (pavM || chaoM) ? {pav: pavM || 0, chao: chaoM || 0} : undefined;
+        if (pavM || chaoM){
+          const novo = {pav: pavM || 0, chao: chaoM || 0};
+          // só descarta os trechos clicados no mapa se ela de fato digitou um valor
+          // diferente do que já estava lá (só reabrir e clicar OK não apaga nada)
+          // compara arredondado (o campo só mostra 2 casas de km = 10 m) pra não confundir
+          // arredondamento de exibição com uma mudança de verdade
+          const r10 = m => Math.round(m / 10);
+          const mudou = !pavAntes || r10(pavAntes.pav) !== r10(novo.pav) || r10(pavAntes.chao) !== r10(novo.chao);
+          l._pavManualRTA = novo;
+          if (mudou) l._pavSegsManualRTA = undefined;
+        } else if (pavAntes){
+          l._pavManualRTA = undefined;
+          l._pavSegsManualRTA = undefined; // limpou os dois campos: volta pro automático
+        }
+        renderizarChao(l);
       }
     }
     l.closePopup();
@@ -1536,11 +1680,12 @@ function carregarDesenhos(){
         if (feat.properties?.icone) layer._iconeRTA = feat.properties.icone;
         if (feat.properties?.medidaManual) layer._medidaManualRTA = feat.properties.medidaManual;
         if (feat.properties?.pavManual) layer._pavManualRTA = feat.properties.pavManual;
+        if (feat.properties?.pavSegs) layer._pavSegsManualRTA = feat.properties.pavSegs;
         if (feat.properties?.legs) layer._legsRTA = feat.properties.legs;
         if (feat.properties?.pav) layer._pavRTA = feat.properties.pav;
         if (feat.properties?.waypoints) layer._waypointsRTA = feat.properties.waypoints;
         registrarDesenho(layer, feat.properties?.nome || "");
-        if (layer._pavRTA) renderizarChao(layer);
+        if (layer._pavRTA || layer._pavSegsManualRTA?.length) renderizarChao(layer);
       },
     });
   });
@@ -1684,11 +1829,12 @@ document.getElementById("arquivo-importar").addEventListener("change", ev => {
             if (p.icone) layer._iconeRTA = p.icone;
             if (p.medidaManual) layer._medidaManualRTA = p.medidaManual;
             if (p.pavManual) layer._pavManualRTA = p.pavManual;
+            if (p.pavSegs) layer._pavSegsManualRTA = p.pavSegs;
             if (p.legs) layer._legsRTA = p.legs;
             if (p.pav) layer._pavRTA = p.pav;
             if (p.waypoints) layer._waypointsRTA = p.waypoints;
             registrarDesenho(layer, p.nome || "Importado");
-            if (layer._pavRTA) renderizarChao(layer);
+            if (layer._pavRTA || layer._pavSegsManualRTA?.length) renderizarChao(layer);
             nDesenhos++;
           }});
         }
@@ -1853,6 +1999,8 @@ function reabrirRota(id){
   map.closePopup();
   const backup = l.toGeoJSON();
   backup.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "",
+                       medidaManual:l._medidaManualRTA || null, pavManual:l._pavManualRTA || null,
+                       pavSegs:l._pavSegsManualRTA || null,
                        legs:l._legsRTA || null, pav:l._pavRTA || null,
                        waypoints:l._waypointsRTA, origem:"levantamento"};
   grupoDesenhos.removeLayer(l);
@@ -1883,11 +2031,14 @@ function encerrarRotaEstrada(){
       const pr = feat.properties || {};
       layer._idRTA = pr.id || novoId();
       if (pr.cor) layer._corRTA = pr.cor;
+      if (pr.medidaManual) layer._medidaManualRTA = pr.medidaManual;
+      if (pr.pavManual) layer._pavManualRTA = pr.pavManual;
+      if (pr.pavSegs) layer._pavSegsManualRTA = pr.pavSegs;
       if (pr.legs) layer._legsRTA = pr.legs;
       if (pr.pav) layer._pavRTA = pr.pav;
       if (pr.waypoints) layer._waypointsRTA = pr.waypoints;
       registrarDesenho(layer, pr.nome || "");
-      if (layer._pavRTA) renderizarChao(layer);
+      if (layer._pavRTA || layer._pavSegsManualRTA?.length) renderizarChao(layer);
     }});
     salvarDesenhos();
   }
