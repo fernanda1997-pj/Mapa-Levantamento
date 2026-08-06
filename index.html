@@ -305,6 +305,18 @@
         Distância manual (opcional — sobrescreve o cálculo automático na legenda e na média)</label>
       <input type="text" id="mini-distancia" placeholder="Ex.: 34,90 km">
     </div>
+    <div id="mini-pavimento-wrap" style="display:none; gap:8px; margin-top:8px">
+      <div style="flex:1">
+        <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:3px">
+          Km pavimentado (manual)</label>
+        <input type="text" id="mini-pav" placeholder="Ex.: 6,80">
+      </div>
+      <div style="flex:1">
+        <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:3px">
+          Km estrada de chão (manual)</label>
+        <input type="text" id="mini-chao" placeholder="Ex.: 58,87">
+      </div>
+    </div>
     <div id="mini-coords-wrap" style="display:none; flex-direction:column; gap:8px; margin-top:8px">
       <div style="display:flex; gap:8px">
         <div style="flex:1">
@@ -520,10 +532,11 @@ function dialogoNome(titulo, valorInicial, cb){
   setTimeout(() => { inp.focus(); inp.select(); }, 50);
 }
 /* igual ao dialogoNome, mas com a cor do desenho — e ícone/coordenadas (se for ponto)
-   ou distância manual (se for rota) — usado ao desenhar/renomear qualquer elemento do
-   levantamento. opts: {cor, icone, comIcone, distancia, comDistancia, lat, lng, comCoords} */
+   ou distância e pavimento manuais (se for rota) — usado ao desenhar/renomear qualquer
+   elemento do levantamento. opts: {cor, icone, comIcone, distancia, comDistancia,
+   lat, lng, comCoords, pav, chao, comPavimento} */
 function dialogoNomeDesenho(titulo, valorInicial, opts, cb){
-  const {cor, icone, comIcone, distancia, comDistancia, lat, lng, comCoords} = opts;
+  const {cor, icone, comIcone, distancia, comDistancia, lat, lng, comCoords, pav, chao, comPavimento} = opts;
   document.getElementById("mini-titulo").textContent = titulo;
   const inp = document.getElementById("mini-input");
   inp.style.display = "block"; inp.value = valorInicial || "";
@@ -534,6 +547,11 @@ function dialogoNomeDesenho(titulo, valorInicial, opts, cb){
   if (comIcone) document.getElementById("mini-icone").value = icone || "";
   document.getElementById("mini-distancia-wrap").style.display = comDistancia ? "" : "none";
   if (comDistancia) document.getElementById("mini-distancia").value = distancia || "";
+  document.getElementById("mini-pavimento-wrap").style.display = comPavimento ? "flex" : "none";
+  if (comPavimento){
+    document.getElementById("mini-pav").value = pav || "";
+    document.getElementById("mini-chao").value = chao || "";
+  }
   document.getElementById("mini-coords-wrap").style.display = comCoords ? "flex" : "none";
   if (comCoords){
     document.getElementById("mini-lat").value = lat != null ? lat.toFixed(6) : "";
@@ -543,6 +561,8 @@ function dialogoNomeDesenho(titulo, valorInicial, opts, cb){
     cor: document.getElementById("mini-cor").value,
     icone: comIcone ? document.getElementById("mini-icone").value : undefined,
     distancia: comDistancia ? document.getElementById("mini-distancia").value.trim() : undefined,
+    pav: comPavimento ? document.getElementById("mini-pav").value.trim() : undefined,
+    chao: comPavimento ? document.getElementById("mini-chao").value.trim() : undefined,
     lat: comCoords ? parseCoordDMS(document.getElementById("mini-lat").value) : undefined,
     lng: comCoords ? parseCoordDMS(document.getElementById("mini-lng").value) : undefined,
   });
@@ -609,6 +629,12 @@ function parseDistanciaManualM(texto){
   if (!limpo) return null;
   const num = parseFloat(limpo.replace(/\./g, "").replace(",", "."));
   return (!isNaN(num) && num > 0) ? num * 1000 : null;
+}
+/* pavimento "de verdade" pra mostrar: o que ela corrigiu manualmente, senão o
+   detectado automaticamente (OpenStreetMap via Valhalla) — só afeta o texto
+   (legenda/balão/média); o tracejado no mapa continua mostrando o detectado */
+function pavEfetivo(layer){
+  return layer._pavManualRTA || layer._pavRTA || null;
 }
 
 function areaM2(latlngs){ // shoelace em UTM (aprox. boa para escala de obra)
@@ -1204,7 +1230,10 @@ function infoGeom(layer){
     return {tipo:"Área", medida:fmtArea(a)};
   }
   if (layer instanceof L.Polyline){
-    const d = layer._medidaManualRTA || distanciaMetros(layer.getLatLngs());
+    // sem distância manual explícita, mas com pavimento manual: soma pav+chão
+    // (senão a distância total ficaria incoerente com o chão informado)
+    const totalPav = layer._pavManualRTA ? layer._pavManualRTA.pav + layer._pavManualRTA.chao : null;
+    const d = layer._medidaManualRTA || totalPav || distanciaMetros(layer.getLatLngs());
     return {tipo:"Rota", medida:fmtDist(d)};
   }
   return {tipo:"Elemento", medida:""};
@@ -1213,13 +1242,13 @@ function infoGeom(layer){
 function popupDesenho(layer){
   const nome = layer._nomeRTA || "(sem nome)";
   const {tipo, medida} = infoGeom(layer);
-  const pav = layer._pavRTA;
+  const pav = pavEfetivo(layer);
   const ehLinha = !(layer instanceof L.Marker);
   return `<div class="pop-titulo">${esc(nome)}</div>
     <div class="pop-info">${tipo}${medida ? " · " + medida : ""}${layer._medidaManualRTA ? " (manual)" : ""}</div>
-    ${pav ? `<div class="pop-info">🛣️ Pavimentado: ${fmtDist(pav.pav)} · 🟤 Estrada de chão: ${fmtDist(pav.chao)}</div>` : ""}
+    ${pav ? `<div class="pop-info">🛣️ Pavimentado: ${fmtDist(pav.pav)} · 🟤 Estrada de chão: ${fmtDist(pav.chao)}${layer._pavManualRTA ? " (manual)" : ""}</div>` : ""}
     <div class="pop-acoes">
-      ${ehLinha && !pav ? `<button onclick="analisarPavimentoDesenho('${layer._idRTA}')">🛞 Pavimento</button>` : ""}
+      ${ehLinha && !layer._pavRTA ? `<button onclick="analisarPavimentoDesenho('${layer._idRTA}')">🛞 Pavimento</button>` : ""}
       ${layer._waypointsRTA?.length ? `<button title="Reabrir para alterar" onclick="reabrirRota('${layer._idRTA}')">🔁 Alterar rota</button>` : ""}
       <button title="Baixar GeoJSON" onclick="baixarDesenho('${layer._idRTA}')">⬇️ Baixar</button>
       <button onclick="renomearDesenho('${layer._idRTA}')">✏️ Renomear</button>
@@ -1277,7 +1306,7 @@ function salvarDesenhos(){
   Object.values(camadasDesenho).forEach(l => {
     const f = l.toGeoJSON();
     f.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "", icone:l._iconeRTA || "",
-                    medidaManual:l._medidaManualRTA || null,
+                    medidaManual:l._medidaManualRTA || null, pavManual:l._pavManualRTA || null,
                     legs:l._legsRTA || null, pav:l._pavRTA || null,
                     waypoints:l._waypointsRTA || null, origem:"levantamento"};
     fc.features.push(f);
@@ -1338,7 +1367,7 @@ function kmlDeDesenhos(camadas, nomeDoc){
   camadas.forEach(l => {
     const nome = escXml(l._nomeRTA || "(sem nome)");
     const props = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "", icone:l._iconeRTA || "",
-                   medidaManual:l._medidaManualRTA || null,
+                   medidaManual:l._medidaManualRTA || null, pavManual:l._pavManualRTA || null,
                    legs:l._legsRTA || null, pav:l._pavRTA || null,
                    waypoints:l._waypointsRTA || null, origem:"levantamento"};
     const ext = `<ExtendedData><Data name="geoportal"><value>${escXml(JSON.stringify(props))}</value></Data></ExtendedData>`;
@@ -1408,6 +1437,7 @@ function importarKmlLevantamento(texto){
     if (props.cor) layer._corRTA = props.cor;
     if (props.icone) layer._iconeRTA = props.icone;
     if (props.medidaManual) layer._medidaManualRTA = props.medidaManual;
+    if (props.pavManual) layer._pavManualRTA = props.pavManual;
     if (props.legs) layer._legsRTA = props.legs;
     if (props.pav) layer._pavRTA = props.pav;
     if (props.waypoints) layer._waypointsRTA = props.waypoints;
@@ -1426,13 +1456,15 @@ function renomearDesenho(id){
   const ehRota = !ehMarcador && !ehArea;
   const titulo = ehMarcador ? "Nome, cor e ícone do ponto"
                : ehRota ? "Nome, cor e distância da rota" : "Nome e cor da área";
-  const distanciaAtual = (ehRota && l._medidaManualRTA)
-    ? (l._medidaManualRTA / 1000).toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2})
-    : "";
+  const fmtKm = m => (m / 1000).toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2});
+  const distanciaAtual = (ehRota && l._medidaManualRTA) ? fmtKm(l._medidaManualRTA) : "";
+  const pavAtual = (ehRota && l._pavManualRTA) ? fmtKm(l._pavManualRTA.pav) : "";
+  const chaoAtual = (ehRota && l._pavManualRTA) ? fmtKm(l._pavManualRTA.chao) : "";
   const pos = ehMarcador ? l.getLatLng() : null;
   dialogoNomeDesenho(titulo, l._nomeRTA || "", {
     cor: l._corRTA, icone: l._iconeRTA, comIcone: ehMarcador,
     distancia: distanciaAtual, comDistancia: ehRota,
+    pav: pavAtual, chao: chaoAtual, comPavimento: ehRota,
     lat: pos && pos.lat, lng: pos && pos.lng, comCoords: ehMarcador,
   }, (nome, dados) => {
     if (nome) l._nomeRTA = nome;
@@ -1444,7 +1476,12 @@ function renomearDesenho(id){
       if (!isNaN(dados.lat) && !isNaN(dados.lng)) l.setLatLng([dados.lat, dados.lng]);
     } else {
       if (l.setStyle) l.setStyle({color: l._corRTA});
-      if (ehRota) l._medidaManualRTA = parseDistanciaManualM(dados.distancia) || undefined;
+      if (ehRota){
+        l._medidaManualRTA = parseDistanciaManualM(dados.distancia) || undefined;
+        const pavM = parseDistanciaManualM(dados.pav);
+        const chaoM = parseDistanciaManualM(dados.chao);
+        l._pavManualRTA = (pavM || chaoM) ? {pav: pavM || 0, chao: chaoM || 0} : undefined;
+      }
     }
     l.closePopup();
     salvarDesenhos();
@@ -1498,6 +1535,7 @@ function carregarDesenhos(){
         if (feat.properties?.cor) layer._corRTA = feat.properties.cor;
         if (feat.properties?.icone) layer._iconeRTA = feat.properties.icone;
         if (feat.properties?.medidaManual) layer._medidaManualRTA = feat.properties.medidaManual;
+        if (feat.properties?.pavManual) layer._pavManualRTA = feat.properties.pavManual;
         if (feat.properties?.legs) layer._legsRTA = feat.properties.legs;
         if (feat.properties?.pav) layer._pavRTA = feat.properties.pav;
         if (feat.properties?.waypoints) layer._waypointsRTA = feat.properties.waypoints;
@@ -1645,6 +1683,7 @@ document.getElementById("arquivo-importar").addEventListener("change", ev => {
             if (p.cor) layer._corRTA = p.cor;
             if (p.icone) layer._iconeRTA = p.icone;
             if (p.medidaManual) layer._medidaManualRTA = p.medidaManual;
+            if (p.pavManual) layer._pavManualRTA = p.pavManual;
             if (p.legs) layer._legsRTA = p.legs;
             if (p.pav) layer._pavRTA = p.pav;
             if (p.waypoints) layer._waypointsRTA = p.waypoints;
@@ -1931,6 +1970,8 @@ async function inserirMediaKm(){
     let totalM;
     if (l._medidaManualRTA){
       totalM = l._medidaManualRTA; // ela digitou a distância (ex.: pra bater com a planilha)
+    } else if (l._pavManualRTA){
+      totalM = l._pavManualRTA.pav + l._pavManualRTA.chao; // soma do pavimento/chão manuais
     } else if (l._legsRTA && l._legsRTA.length){
       totalM = l._legsRTA.reduce((a, b) => a + b, 0); // extensão real pela estrada
     } else {
@@ -1940,8 +1981,9 @@ async function inserirMediaKm(){
     if (!totalM){ aviso("A rota não tem extensão."); return; }
     const fmtN = m => (m / 1000).toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2});
     anexar(`${(l._nomeRTA || "ROTA").toUpperCase()}: ${fmtN(totalM)}/2 = ${fmtN(totalM / 2)} KM`);
-    if (l._pavRTA && l._pavRTA.chao > 30){
-      anexar(`(sendo ${fmtN(l._pavRTA.chao)} km em estrada de chão e ${fmtN(l._pavRTA.pav)} km pavimentado)`);
+    const pav = pavEfetivo(l);
+    if (pav && pav.chao > 30){
+      anexar(`(sendo ${fmtN(pav.chao)} km em estrada de chão e ${fmtN(pav.pav)} km pavimentado)`);
     }
     return;
   }
@@ -1985,10 +2027,11 @@ function itensLegendaPrancha(){
     } else if (l.getBounds && vb.intersects(l.getBounds())){
       const {medida} = infoGeom(l);
       itens.push({tipo:"linha", cor, rot:nome + (medida ? ` · ${medida}` : "")});
-      if (l._pavRTA && l._pavRTA.chao > 30){
+      const pav = pavEfetivo(l);
+      if (pav && pav.chao > 30){
         itens.push({tipo:"sub", cor:"#64748B",
-                    rot:`PAV ${fmtDist(l._pavRTA.pav)} · N PAV ${fmtDist(l._pavRTA.chao)}`});
-        if (l._pavRTA.segs?.length) temChao = true;
+                    rot:`PAV ${fmtDist(pav.pav)} · N PAV ${fmtDist(pav.chao)}${l._pavManualRTA ? " (manual)" : ""}`});
+        if (l._pavRTA?.segs?.length) temChao = true;
       }
     }
   });
