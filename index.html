@@ -2248,24 +2248,29 @@ function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas, memoria){
   const texto = (t, x, y, fonte, cor, alin) => {
     g.font = fonte; g.fillStyle = cor; g.textAlign = alin || "left"; g.fillText(t, x, y); g.textAlign = "left";
   };
-  /* --- título (sup-esq), com as logos RTA e MSI --- */
-  g.font = "bold 24px Segoe UI, Arial";
+  /* --- título (sup-esq): logos numa faixa no topo, título/subtítulo centralizados
+     embaixo — ocupa menos largura que logo-ao-lado-do-título, pra não atrapalhar
+     quando uma rota extensa passa perto do canto superior esquerdo --- */
+  g.font = "bold 22px Segoe UI, Arial";
   const tw = g.measureText(titulo).width;
-  g.font = "15px Segoe UI, Arial";
+  g.font = "14px Segoe UI, Arial";
   const sw = subtitulo ? g.measureText(subtitulo).width : 0;
   const logosOk = (Array.isArray(logos) ? logos : [logos]).filter(Boolean);
-  const logosW = logosOk.map(l => Math.round(46 * (l.width / l.height)));
-  const totalLogos = logosW.reduce((a, b) => a + b, 0) + logosOk.length * 14;
-  const tbW = Math.max(tw, sw) + 36 + totalLogos;
-  const tbH = subtitulo ? 78 : 58;
+  const altLogos = 32;
+  const logosW = logosOk.map(l => Math.round(altLogos * (l.width / l.height)));
+  const largLogos = logosW.reduce((a, b) => a + b, 0) + Math.max(0, logosOk.length - 1) * 10;
+  const tbW = Math.max(tw, sw, largLogos) + 28;
+  const tbH = 14 + altLogos + 10 + 26 + (subtitulo ? 20 : 2) + 10;
   caixa(14, 14, tbW, tbH);
-  let tx = 30;
+  let logoX = 14 + (tbW - largLogos) / 2;
+  const ly0 = 14 + 10;
   logosOk.forEach((l, i) => {
-    g.drawImage(l, tx - 2, 14 + (tbH - 46) / 2, logosW[i], 46);
-    tx += logosW[i] + 14;
+    g.drawImage(l, logoX, ly0, logosW[i], altLogos);
+    logoX += logosW[i] + 10;
   });
-  texto(titulo, tx, 46, "bold 24px Segoe UI, Arial", "#0f172a");
-  if (subtitulo) texto(subtitulo, tx, 68, "15px Segoe UI, Arial", "#334155");
+  const cx = 14 + tbW / 2;
+  texto(titulo, cx, ly0 + altLogos + 24, "bold 22px Segoe UI, Arial", "#0f172a", "center");
+  if (subtitulo) texto(subtitulo, cx, ly0 + altLogos + 44, "14px Segoe UI, Arial", "#334155", "center");
   /* --- legenda (sup-dir) --- */
   const itens = itensLegendaPrancha().slice(0, 18);
   const legFS = 13;
