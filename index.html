@@ -2181,7 +2181,7 @@ function itensLegendaPrancha(){
       const pav = pavEfetivo(l);
       if (pav && pav.chao > 30){
         itens.push({tipo:"sub", cor:"#64748B",
-                    rot:`PAV ${fmtDist(pav.pav)} · N PAV ${fmtDist(pav.chao)}${l._pavManualRTA ? " (manual)" : ""}`});
+                    rot:`PAV ${fmtDist(pav.pav)} · N PAV ${fmtDist(pav.chao)}`});
         if (l._pavRTA?.segs?.length) temChao = true;
       }
     }
