@@ -917,10 +917,11 @@ function renderizarTodosFixos(){
              <button title="Excluir" onclick="excluirPontoFixo('${p.id}')">🗑️</button>`;
         const selo = e.tipo === "manual"
           ? `<span title="Você que cadastrou este ponto (por isso dá pra editar/excluir)"
-              style="font-size:9px; font-weight:700; color:#fff; background:var(--cinza); border-radius:4px; padding:1px 5px; margin-left:4px; cursor:help">SEU</span>` : "";
+              style="flex:none; font-size:9px; font-weight:700; color:#fff; background:var(--cinza); border-radius:4px; padding:1px 5px; cursor:help">SEU</span>` : "";
         linha.innerHTML = `
           <input type="checkbox" class="chk-ponto" title="Mostrar no mapa e na prancha">
-          <span class="nome" style="font-size:12px">${esc(p.nome)}${selo}</span>
+          <span class="nome" style="font-size:12px">${esc(p.nome)}</span>
+          ${selo}
           ${acoes}`;
         const cb = linha.querySelector(".chk-ponto");
         cb.checked = !estaOculto(e);
