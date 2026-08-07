@@ -164,7 +164,13 @@
     </header>
     <div class="conteudo">
 
-      <details class="secao" open>
+      <a href="tutorial.html" target="_blank" rel="noopener"
+        style="display:flex; align-items:center; justify-content:center; gap:6px; margin-bottom:10px;
+        padding:8px; border-radius:7px; background:var(--fundo); color:var(--azul);
+        font-size:13px; font-weight:600; text-decoration:none; border:1px solid var(--borda)">
+        ❓ Como usar o Geoportal (tutorial)</a>
+
+      <details class="secao">
         <summary>🗺️ Mapa de fundo</summary>
         <div class="corpo">
           <div class="radio-base" id="bases">
@@ -175,12 +181,12 @@
         </div>
       </details>
 
-      <details class="secao" open>
+      <details class="secao">
         <summary>🌎 Regiões</summary>
         <div class="corpo" id="lista-regioes"></div>
       </details>
 
-      <details class="secao" open>
+      <details class="secao">
         <summary>📌 Pontos fixos</summary>
         <div class="corpo">
           <div id="lista-fixos-arquivo"></div>
@@ -190,7 +196,7 @@
         </div>
       </details>
 
-      <details class="secao" open id="secao-rotas-arquivo">
+      <details class="secao" id="secao-rotas-arquivo">
         <summary>🛤️ Rotas dos lotes</summary>
         <div class="corpo">
           <div id="lista-rotas-arquivo"></div>
@@ -209,7 +215,7 @@
           </div>
           <button class="btn secundario" style="margin-top:6px"
             onclick="document.getElementById('arquivo-importar').click()">📂 Abrir levantamento salvo</button>
-          <p class="dica"><b>Desenhar:</b> o 🛣️ traça a rota pela estrada com 2 cliques
+          <p class="dica"><b>Desenhar:</b> o <svg width="14" height="14" viewBox="0 0 40 40" style="display:inline-block; vertical-align:-2px"><rect x="2" y="2" width="36" height="36" rx="9" fill="#BFE6C4" stroke="#7CB894" stroke-width="1"/><path d="M13 30 C13 22, 27 20, 27 11" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/><path d="M13 30 C13 22, 27 20, 27 11" fill="none" stroke="#94A3B8" stroke-width="1.6" stroke-linecap="round"/><path d="M27 5.5c-3 0-5.5 2.5-5.5 5.5 0 4.1 5.5 10 5.5 10s5.5-5.9 5.5-10c0-3-2.5-5.5-5.5-5.5z" fill="#1E3A72"/><circle cx="27" cy="11" r="2" fill="#fff"/><path d="M13 19.5c-3 0-5.5 2.5-5.5 5.5 0 4.1 5.5 10 5.5 10s5.5-5.9 5.5-10c0-3-2.5-5.5-5.5-5.5z" fill="#DC2626"/><circle cx="13" cy="25" r="2" fill="#fff"/></svg> traça a rota pela estrada com 2 cliques
             (pontos fixos valem como origem/destino); a barra do canto também tem ponto,
             rota manual e área.<br>
             <b>Guardar:</b> Salvar (KML) baixa tudo num arquivo para a sua pasta;
@@ -217,7 +223,7 @@
         </div>
       </details>
 
-      <details class="secao" open>
+      <details class="secao">
         <summary>🖼️ Prancha (mapa de localização)</summary>
         <div class="corpo">
           <button class="btn" onclick="abrirModalPrancha()">🖼️ Gerar prancha (PNG)</button>
@@ -403,15 +409,16 @@
 /* ================= Configuração ================= */
 const CORES_REGIOES = {1:"#7391B5", 2:"#74A88E", 3:"#A88BB5", 11:"#C49A6C", 12:"#B57A8A", 13:"#8A9E6B"};
 const CATEGORIAS = {
+  cidade:   {label:"Cidade",            cor:"#0284C7", icone:"🏙️", plural:"Cidades"},
   pedreira: {label:"Pedreira",          cor:"#57534E", icone:"🪨", plural:"Pedreiras"},
   cimento:  {label:"Cimento",           cor:"#BE123C", icone:"🏭", plural:"Cimento"},
   canteiro: {label:"Canteiro de obras", cor:"#DC2626", icone:"⛺", plural:"Canteiros de obras"},
   jazida:   {label:"Jazida",            cor:"#B45309", icone:"⛏️", plural:"Jazidas"},
   areial:   {label:"Areial",            cor:"#D97706", icone:"🚜", plural:"Areais"},
   usina:    {label:"Usina de asfalto",  cor:"#1F2937", icone:"🛢️", plural:"Usinas de asfalto"},
-  cae:      {label:"CAE (Concreto Asfáltico Estocável)", cor:"#0F766E", icone:"🏗️", plural:"CAE (Concreto Asfáltico Estocável)"},
+  cae:      {label:"CAE (Concreto Asfáltico Estocável)", cor:"#0F766E", icone:"🏗️", plural:"CAE (Concreto Asfáltico Estocável)",
+             desc:"CAE = Concreto Asfáltico Estocável: usina fixa onde a massa asfáltica fica armazenada pronta pra uso."},
   apoio:    {label:"Ponto de apoio",    cor:"#059669", icone:"🏠", plural:"Pontos de apoio"},
-  cidade:   {label:"Cidade",            cor:"#0284C7", icone:"🏙️", plural:"Cidades"},
   outro:    {label:"Outro",             cor:"#7C3AED", icone:"📍", plural:"Outros"},
 };
 const CHAVE_FIXOS = "rta_geoportal_pontos_fixos";
@@ -729,7 +736,7 @@ function popupFixoArquivo(p){
       UTM ${u.zona}S · E ${u.e.toFixed(0)} · N ${u.n.toFixed(0)}</div>
     <div class="pop-info" style="color:#94A3B8">Camada do arquivo ${esc(p.arquivo || "")}</div>
     <div class="pop-acoes">
-      <button onclick="rotaDesdeAqui(${p.lat}, ${p.lng})">🛣️ Rota daqui</button>
+      <button onclick="rotaDesdeAqui(${p.lat}, ${p.lng})">${iconeRotaSvg(14)} Rota daqui</button>
       <button onclick="soEsteArquivo('${encodeURIComponent(idArq(p))}')" title="Esconder todas as outras">🎯 Só esta</button>
     </div>`;
 }
@@ -738,6 +745,12 @@ const gruposFixosArquivo = {};  // categoria -> layerGroup
 const idArq = p => `${p.categoria}|${p.nome}|${p.lat.toFixed(5)},${p.lng.toFixed(5)}`;
 /* guarda os OCULTOS: pontos novos de arquivos futuros já nascem visíveis */
 let ocultosArquivo = new Set(carregar("rta_geoportal_fixos_ocultos", []));
+/* na primeira visita (sem preferência salva ainda), as cidades já nascem ocultas —
+   são a maior categoria (150) e servem mais de referência de fundo do que de
+   ponto de interesse do levantamento */
+if (localStorage.getItem("rta_geoportal_fixos_ocultos") === null){
+  fixosArquivo.forEach(p => { if (p.categoria === "cidade") ocultosArquivo.add(idArq(p)); });
+}
 const salvarOcultos = () => salvar("rta_geoportal_fixos_ocultos", [...ocultosArquivo]);
 
 /* rótulos permanentes com halo (nome ao lado do marcador, sai na prancha) */
@@ -853,13 +866,14 @@ function renderizarTodosFixos(){
           <span class="seta-grupo">▶</span>
           <input type="checkbox" title="Mostrar/ocultar todos">
           <span style="font-size:14px">${c.icone}</span>
-          <b style="font-size:13px">${c.plural} (<span class="qt-vis"></span>/${entradas.length})</b>
+          <b style="font-size:13px"${c.desc ? ` title="${esc(c.desc)}" style="cursor:help; border-bottom:1px dotted #94A3B8"` : ""}>${c.plural}</b>
+          <span class="qt-vis" style="font-size:12px; color:var(--cinza)"></span>
         </summary>`;
       const chkTodos = det.querySelector("input");
       const qtVis = det.querySelector(".qt-vis");
       const atualizarCabecalho = () => {
         const vis = entradas.filter(e => !estaOculto(e)).length;
-        qtVis.textContent = vis;
+        qtVis.textContent = vis === entradas.length ? `(${entradas.length})` : `(${vis} de ${entradas.length} visíveis)`;
         chkTodos.checked = vis === entradas.length;
         chkTodos.indeterminate = vis > 0 && vis < entradas.length;
       };
@@ -897,13 +911,16 @@ function renderizarTodosFixos(){
         const linha = document.createElement("div");
         linha.className = "linha-camada";
         const acoes = e.tipo === "arquivo"
-          ? `<button title="Deixar só esta" onclick="soEsteArquivo('${encodeURIComponent(chaveDe(e))}')">🎯</button>`
-          : `<button title="Deixar só esta" onclick="soEsteManual('${p.id}')">🎯</button>
+          ? `<button title="Esconde as outras ${c.plural.toLowerCase()} e deixa só esta visível" onclick="soEsteArquivo('${encodeURIComponent(chaveDe(e))}')" style="font-size:11px; white-space:nowrap">🎯 Só esta</button>`
+          : `<button title="Esconde as outras ${c.plural.toLowerCase()} e deixa só esta visível" onclick="soEsteManual('${p.id}')" style="font-size:11px; white-space:nowrap">🎯 Só esta</button>
              <button title="Editar" onclick="abrirModalPonto('${p.id}')">✏️</button>
              <button title="Excluir" onclick="excluirPontoFixo('${p.id}')">🗑️</button>`;
+        const selo = e.tipo === "manual"
+          ? `<span title="Você que cadastrou este ponto (por isso dá pra editar/excluir)"
+              style="font-size:9px; font-weight:700; color:#fff; background:var(--cinza); border-radius:4px; padding:1px 5px; margin-left:4px; cursor:help">SEU</span>` : "";
         linha.innerHTML = `
           <input type="checkbox" class="chk-ponto" title="Mostrar no mapa e na prancha">
-          <span class="nome" style="font-size:12px">${esc(p.nome)}</span>
+          <span class="nome" style="font-size:12px">${esc(p.nome)}${selo}</span>
           ${acoes}`;
         const cb = linha.querySelector(".chk-ponto");
         cb.checked = !estaOculto(e);
@@ -1034,7 +1051,7 @@ function popupFixo(p){
     <div class="pop-info" style="font-family:monospace">${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}<br>
       UTM ${u.zona}S · E ${u.e.toFixed(0)} · N ${u.n.toFixed(0)}</div>
     <div class="pop-acoes">
-      <button onclick="rotaDesdeAqui(${p.lat}, ${p.lng})">🛣️ Rota daqui</button>
+      <button onclick="rotaDesdeAqui(${p.lat}, ${p.lng})">${iconeRotaSvg(14)} Rota daqui</button>
       <button onclick="abrirModalPonto('${p.id}')">✏️ Editar</button>
       <button onclick="excluirPontoFixo('${p.id}')">🗑️ Excluir</button>
     </div>`;
@@ -1186,6 +1203,19 @@ function alternarOcultoDesenho(id, mostrar){
     if (overlaysChao[id]) map.removeLayer(overlaysChao[id]);
   }
   salvarOcultosDesenho();
+}
+/* ícone da ferramenta "Rota pela estrada": placa de mapa com estrada ligando
+   2 pinos, no lugar do emoji 🛣️ — tam = tamanho em px (largura=altura) */
+function iconeRotaSvg(tam){
+  return `<svg width="${tam}" height="${tam}" viewBox="0 0 40 40" style="display:inline-block; vertical-align:middle">
+    <rect x="2" y="2" width="36" height="36" rx="9" fill="#BFE6C4" stroke="#7CB894" stroke-width="1"/>
+    <path d="M13 30 C13 22, 27 20, 27 11" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+    <path d="M13 30 C13 22, 27 20, 27 11" fill="none" stroke="#94A3B8" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M27 5.5c-3 0-5.5 2.5-5.5 5.5 0 4.1 5.5 10 5.5 10s5.5-5.9 5.5-10c0-3-2.5-5.5-5.5-5.5z" fill="#1E3A72"/>
+    <circle cx="27" cy="11" r="2" fill="#fff"/>
+    <path d="M13 19.5c-3 0-5.5 2.5-5.5 5.5 0 4.1 5.5 10 5.5 10s5.5-5.9 5.5-10c0-3-2.5-5.5-5.5-5.5z" fill="#DC2626"/>
+    <circle cx="13" cy="25" r="2" fill="#fff"/>
+  </svg>`;
 }
 /* cada desenho ganha uma cor própria (aparece igual na legenda da prancha) */
 const CORES_DESENHO = ["#DC2626", "#2563EB", "#F97316", "#059669", "#7C3AED", "#0EA5E9", "#CA8A04", "#DB2777"];
@@ -2037,7 +2067,7 @@ function bannerRotaHtml(){
       color:#fff; ${proximoTrechoManual ? "font-weight:700" : ""}">
       ${proximoTrechoManual
         ? `📍 Próximo trecho: NA MÃO — ${pavimentoManualProximo === "chao" ? "sem pavimentação" : "com pavimentação"} (clique pra voltar a seguir a estrada)`
-        : "🛣️ Próximo trecho: pela estrada (clique pra desenhar na mão)"}
+        : `${iconeRotaSvg(13)} Próximo trecho: pela estrada (clique pra desenhar na mão)`}
     </button>`;
   const pavBtn = (id, rotulo, ativo, cor) =>
     `<button id="${id}" style="flex:1; padding:4px 6px; border-radius:5px; cursor:pointer; font-size:11px; white-space:nowrap;
@@ -2046,7 +2076,7 @@ function bannerRotaHtml(){
       ${pavBtn("rota-pav-chao", "🟤 Sem pavimentação", pavimentoManualProximo === "chao", "#7C4A03")}
       ${pavBtn("rota-pav-asfalto", "⬛ Com pavimentação", pavimentoManualProximo === "pav", "#334155")}
     </div>` : "";
-  return `<b>🛣️ Rota pela estrada</b><br>${status}
+  return `<b>${iconeRotaSvg(15)} Rota pela estrada</b><br>${status}
     <div style="display:flex; gap:5px; margin-top:6px">
       ${rotaGeom && !rotaCalculando ? btn("rota-concluir", "✔ Concluir", true) : ""}
       ${n > 0 ? btn("rota-desfazer", "↩ Desfazer") : ""}
@@ -2282,7 +2312,7 @@ function criarMarcadoresLimiteChao(itens){
 function reabrirRota(id){
   const l = camadasDesenho[id];
   if (!l || !l._waypointsRTA || !l._waypointsRTA.length){
-    aviso("Esta rota não guardou os pontos originais (foi feita antes desse recurso) — trace de novo com o 🛣️.");
+    aviso("Esta rota não guardou os pontos originais (foi feita antes desse recurso) — trace de novo com a ferramenta Rota pela estrada.");
     return;
   }
   map.closePopup();
@@ -2372,8 +2402,8 @@ const BotaoRotaEstrada = L.Control.extend({
   onAdd(){
     const d = L.DomUtil.create("div", "leaflet-bar");
     const a = L.DomUtil.create("a", "", d);
-    a.href = "#"; a.title = "Rota pela estrada (automática entre pontos)"; a.textContent = "🛣️";
-    a.style.fontSize = "15px";
+    a.href = "#"; a.title = "Rota pela estrada (automática entre pontos)"; a.innerHTML = iconeRotaSvg(20);
+    a.style.display = "flex"; a.style.alignItems = "center"; a.style.justifyContent = "center";
     L.DomEvent.on(a, "click", ev => { L.DomEvent.stop(ev); iniciarRotaEstrada(); });
     return d;
   },
