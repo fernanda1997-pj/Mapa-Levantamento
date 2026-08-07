@@ -1212,6 +1212,19 @@ function decodificarPolyline6(str){
 function removerChao(id){
   if (overlaysChao[id]){ map.removeLayer(overlaysChao[id]); delete overlaysChao[id]; }
 }
+/* apaga os pontos de início/fim de estrada de chão criados automaticamente junto com a rota
+   (guardados só em memória, não persistem — se a página recarregar eles ficam soltos e viram
+   pontos normais do levantamento, sem vínculo com a rota) */
+function removerLimitesChao(layer){
+  if (!layer._limitesChaoRTA) return;
+  layer._limitesChaoRTA.forEach(mid => {
+    const mk = camadasDesenho[mid];
+    if (!mk) return;
+    grupoDesenhos.removeLayer(mk);
+    delete camadasDesenho[mid];
+  });
+  layer._limitesChaoRTA = null;
+}
 function renderizarChao(layer){
   removerChao(layer._idRTA);
   // se ela marcou trechos na mão, isso manda mais que a detecção automática
@@ -1470,6 +1483,7 @@ function registrarDesenho(layer, nome){
   layer.on("pm:remove", () => {
     delete camadasDesenho[id];
     removerChao(id);
+    removerLimitesChao(layer);
     salvarDesenhos();
   });
 }
@@ -1481,7 +1495,7 @@ function salvarDesenhos(){
     f.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "", icone:l._iconeRTA || "",
                     medidaManual:l._medidaManualRTA || null, pavManual:l._pavManualRTA || null,
                     medidaManualTxt:l._medidaManualTxtRTA || null, pavManualTxt:l._pavManualTxtRTA || null,
-                    pavSegs:l._pavSegsManualRTA || null,
+                    pavSegs:l._pavSegsManualRTA || null, segmentosManual:l._segmentosManualRTA || null,
                     legs:l._legsRTA || null, pav:l._pavRTA || null,
                     waypoints:l._waypointsRTA || null, origem:"levantamento"};
     fc.features.push(f);
@@ -1551,7 +1565,7 @@ function kmlDeDesenhos(camadas, nomeDoc){
     const props = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "", icone:l._iconeRTA || "",
                    medidaManual:l._medidaManualRTA || null, pavManual:l._pavManualRTA || null,
                    medidaManualTxt:l._medidaManualTxtRTA || null, pavManualTxt:l._pavManualTxtRTA || null,
-                   pavSegs:l._pavSegsManualRTA || null,
+                   pavSegs:l._pavSegsManualRTA || null, segmentosManual:l._segmentosManualRTA || null,
                    legs:l._legsRTA || null, pav:l._pavRTA || null,
                    waypoints:l._waypointsRTA || null, origem:"levantamento"};
     const ext = `<ExtendedData><Data name="geoportal"><value>${escXml(JSON.stringify(props))}</value></Data></ExtendedData>`;
@@ -1625,6 +1639,7 @@ function importarKmlLevantamento(texto){
     if (props.medidaManualTxt) layer._medidaManualTxtRTA = props.medidaManualTxt;
     if (props.pavManualTxt) layer._pavManualTxtRTA = props.pavManualTxt;
     if (props.pavSegs) layer._pavSegsManualRTA = props.pavSegs;
+    if (props.segmentosManual) layer._segmentosManualRTA = props.segmentosManual;
     if (props.legs) layer._legsRTA = props.legs;
     if (props.pav) layer._pavRTA = props.pav;
     if (props.waypoints) layer._waypointsRTA = props.waypoints;
@@ -1709,6 +1724,7 @@ function excluirDesenho(id){
     grupoDesenhos.removeLayer(l);
     delete camadasDesenho[id];
     removerChao(id);
+    removerLimitesChao(l);
     if (ocultosDesenho.delete(id)) salvarOcultosDesenho();
     salvarDesenhos();
   });
@@ -1755,6 +1771,7 @@ function carregarDesenhos(){
         if (feat.properties?.medidaManualTxt) layer._medidaManualTxtRTA = feat.properties.medidaManualTxt;
         if (feat.properties?.pavManualTxt) layer._pavManualTxtRTA = feat.properties.pavManualTxt;
         if (feat.properties?.pavSegs) layer._pavSegsManualRTA = feat.properties.pavSegs;
+        if (feat.properties?.segmentosManual) layer._segmentosManualRTA = feat.properties.segmentosManual;
         if (feat.properties?.legs) layer._legsRTA = feat.properties.legs;
         if (feat.properties?.pav) layer._pavRTA = feat.properties.pav;
         if (feat.properties?.waypoints) layer._waypointsRTA = feat.properties.waypoints;
@@ -1906,6 +1923,7 @@ document.getElementById("arquivo-importar").addEventListener("change", ev => {
             if (p.medidaManualTxt) layer._medidaManualTxtRTA = p.medidaManualTxt;
             if (p.pavManualTxt) layer._pavManualTxtRTA = p.pavManualTxt;
             if (p.pavSegs) layer._pavSegsManualRTA = p.pavSegs;
+            if (p.segmentosManual) layer._segmentosManualRTA = p.segmentosManual;
             if (p.legs) layer._legsRTA = p.legs;
             if (p.pav) layer._pavRTA = p.pav;
             if (p.waypoints) layer._waypointsRTA = p.waypoints;
@@ -1944,6 +1962,8 @@ let rotaCorSugerida = null;
 let rotaCalculando = false;
 let rotaAbort = null;
 let rotaErro = false;
+let segmentosManualRota = [];   // um por trecho entre pontos (true = ela desenhou na mão)
+let proximoTrechoManual = false; // modo ativo pro PRÓXIMO clique
 
 function bannerRotaHtml(){
   const n = rotaPontos.length;
@@ -1957,12 +1977,19 @@ function bannerRotaHtml(){
     `<button id="${id}" style="flex:1; padding:5px 7px; border-radius:5px; cursor:pointer; white-space:nowrap; ${
       cheio ? "border:none; background:#fff; color:#1E3A72; font-weight:700"
             : "border:1px solid #fff; background:transparent; color:#fff"}">${rotulo}</button>`;
+  const modoBtn = `<button id="rota-modo-manual" style="width:100%; margin-top:6px; padding:5px 7px;
+      border-radius:5px; cursor:pointer; text-align:left; border:1px solid #fff;
+      background:${proximoTrechoManual ? "#7C4A03" : "transparent"}; color:#fff; ${proximoTrechoManual ? "font-weight:700" : ""}">
+      ${proximoTrechoManual
+        ? "📍 Próximo trecho: NA MÃO (clique pra voltar a seguir a estrada)"
+        : "🛣️ Próximo trecho: pela estrada (clique pra desenhar na mão)"}
+    </button>`;
   return `<b>🛣️ Rota pela estrada</b><br>${status}
     <div style="display:flex; gap:5px; margin-top:6px">
       ${rotaGeom && !rotaCalculando ? btn("rota-concluir", "✔ Concluir", true) : ""}
       ${n > 0 ? btn("rota-desfazer", "↩ Desfazer") : ""}
       ${btn("rota-cancelar", "✖ Cancelar")}
-    </div>`;
+    </div>${modoBtn}`;
 }
 function atualizarBannerRota(){
   if (!rotaBanner) return;
@@ -1974,11 +2001,13 @@ function atualizarBannerRota(){
   ligar("rota-concluir", concluirRotaEstrada);
   ligar("rota-desfazer", desfazerPontoRota);
   ligar("rota-cancelar", encerrarRotaEstrada);
+  ligar("rota-modo-manual", () => { proximoTrechoManual = !proximoTrechoManual; atualizarBannerRota(); });
 }
 function iniciarRotaEstrada(){
   if (rotaAtiva) return;
   rotaAtiva = true;
   rotaPontos = []; rotaMarcadores = [];
+  segmentosManualRota = []; proximoTrechoManual = false;
   rotaGeom = null; rotaMedida = ""; rotaErro = false;
   document.getElementById("painel").classList.remove("aberto");
   map.closePopup();
@@ -1999,9 +2028,11 @@ function cliqueRotaEstrada(ev){ adicionarPontoRota(ev.latlng); }
 function adicionarPontoRota(latlng){
   if (!rotaAtiva) return;
   rotaPontos.push(latlng);
+  if (rotaPontos.length >= 2) segmentosManualRota.push(proximoTrechoManual);
+  const corPonto = proximoTrechoManual && rotaPontos.length >= 2 ? "#7C4A03" : "#1E3A72";
   const m = L.marker(latlng, {icon: L.divIcon({
     className:"",
-    html:`<div style="width:22px;height:22px;border-radius:50%;background:#1E3A72;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${rotaPontos.length}</div>`,
+    html:`<div style="width:22px;height:22px;border-radius:50%;background:${corPonto};color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${rotaPontos.length}</div>`,
     iconSize:[22,22], iconAnchor:[11,11],
   }), interactive:false}).addTo(map);
   rotaMarcadores.push(m);
@@ -2011,6 +2042,7 @@ function adicionarPontoRota(latlng){
 function desfazerPontoRota(){
   if (!rotaPontos.length) return;
   rotaPontos.pop();
+  if (segmentosManualRota.length) segmentosManualRota.pop();
   map.removeLayer(rotaMarcadores.pop());
   rotaErro = false;
   if (rotaPontos.length >= 2) recalcularRotaEstrada();
@@ -2020,22 +2052,66 @@ function desfazerPontoRota(){
     atualizarBannerRota();
   }
 }
+/* agrupa segmentos consecutivos do mesmo tipo (manual/estrada) em trechos, cada um
+   com o intervalo de índices de rotaPontos que ele cobre */
+function agruparTrechosRota(segmentos){
+  if (!segmentos.length) return [];
+  const trechos = [];
+  let inicio = 0;
+  for (let i = 1; i <= segmentos.length; i++){
+    if (i === segmentos.length || segmentos[i] !== segmentos[inicio]){
+      trechos.push({manual: segmentos[inicio], de: inicio, ate: i});
+      inicio = i;
+    }
+  }
+  return trechos;
+}
+/* acha as transições estrada<->chão dentro dos pontos clicados: cada troca de tipo entre um
+   trecho e o seguinte é o limite (o ponto em comum entre os dois). Pontas da rota que já
+   começam/terminam de chão não contam (não é limite "entre" asfalto e chão, é a rota toda) */
+function limitesChaoDaRota(pontos, segmentos){
+  const limites = [];
+  for (let i = 1; i < segmentos.length; i++){
+    if (segmentos[i] === segmentos[i - 1]) continue;
+    const p = pontos[i];
+    limites.push({lat: p.lat, lng: p.lng, tipo: segmentos[i] ? "inicio" : "fim"});
+  }
+  return limites;
+}
 async function recalcularRotaEstrada(){
   if (rotaAbort) rotaAbort.abort();
   rotaAbort = new AbortController();
   rotaCalculando = true; rotaErro = false;
   atualizarBannerRota();
-  const coords = rotaPontos.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(";");
   try {
-    const resp = await fetch(
-      `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false`,
-      {signal: rotaAbort.signal});
-    const j = await resp.json();
-    if (j.code !== "Ok" || !j.routes || !j.routes.length) throw new Error(j.message || "sem rota");
-    rotaGeom = j.routes[0].geometry;
-    rotaLegs = (j.routes[0].legs || []).map(lg => lg.distance);
-    rotaMedida = fmtDist(j.routes[0].distance);
-    const latlngs = rotaGeom.coordinates.map(c => [c[1], c[0]]);
+    const trechos = agruparTrechosRota(segmentosManualRota);
+    const coordsFinal = [], legsFinal = [];
+    for (const t of trechos){
+      const pontosTrecho = rotaPontos.slice(t.de, t.ate + 1);
+      let coordsTrecho, legsTrecho;
+      if (t.manual){
+        // desenhado na mão: liga os pontos direto, sem seguir estrada nenhuma
+        coordsTrecho = pontosTrecho.map(p => [p.lng, p.lat]);
+        legsTrecho = [];
+        for (let i = 1; i < pontosTrecho.length; i++) legsTrecho.push(map.distance(pontosTrecho[i - 1], pontosTrecho[i]));
+      } else {
+        const coords = pontosTrecho.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join(";");
+        const resp = await fetch(
+          `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false`,
+          {signal: rotaAbort.signal});
+        const j = await resp.json();
+        if (j.code !== "Ok" || !j.routes || !j.routes.length) throw new Error(j.message || "sem rota");
+        coordsTrecho = j.routes[0].geometry.coordinates;
+        legsTrecho = (j.routes[0].legs || []).map(lg => lg.distance);
+      }
+      if (coordsFinal.length) coordsTrecho = coordsTrecho.slice(1); // não duplica o ponto de junção
+      coordsFinal.push(...coordsTrecho);
+      legsFinal.push(...legsTrecho);
+    }
+    rotaGeom = {type:"LineString", coordinates: coordsFinal};
+    rotaLegs = legsFinal;
+    rotaMedida = fmtDist(legsFinal.reduce((a, b) => a + b, 0));
+    const latlngs = coordsFinal.map(c => [c[1], c[0]]);
     if (rotaPreview) rotaPreview.setLatLngs(latlngs);
     else rotaPreview = L.polyline(latlngs, {color:"#DC2626", weight:5, opacity:.85, interactive:false}).addTo(map);
     rotaCalculando = false;
@@ -2052,18 +2128,56 @@ function concluirRotaEstrada(){
   const linha = L.geoJSON(rotaGeom).getLayers()[0];
   linha._legsRTA = rotaLegs && rotaLegs.length ? rotaLegs : null;
   linha._waypointsRTA = rotaPontos.map(p => [+p.lat.toFixed(6), +p.lng.toFixed(6)]);
+  linha._segmentosManualRTA = segmentosManualRota.some(Boolean) ? [...segmentosManualRota] : null;
   if (rotaCorSugerida) linha._corRTA = rotaCorSugerida;
   const medida = rotaMedida;
   const sugestao = rotaNomeSugerido || ("Rota " + (Object.keys(camadasDesenho).length + 1));
+  const limites = limitesChaoDaRota(rotaPontos, segmentosManualRota); // antes de encerrar (limpa rotaPontos)
   rotaNomeSugerido = null; rotaCorSugerida = null;
   encerrarRotaEstrada();
   registrarDesenho(linha, sugestao);
+  linha._limitesChaoRTA = criarLimitesChao(limites, sugestao);
   salvarDesenhos();
   dialogoNome(`Nome (Rota pela estrada · ${medida})`, sugestao, nome => {
-    if (nome) linha._nomeRTA = nome;
+    if (nome && nome !== sugestao){
+      linha._nomeRTA = nome;
+      (linha._limitesChaoRTA || []).forEach(mid => {
+        const mk = camadasDesenho[mid];
+        if (!mk) return;
+        mk._nomeRTA = mk._nomeRTA.replace(`– ${sugestao}`, `– ${nome}`);
+        aplicarRotulo(mk, mk._nomeRTA, [13, -18]);
+      });
+    }
     salvarDesenhos();
   });
   analisarPavimento(linha).catch(() => {}); // asfalto x chão, preenchido em segundo plano
+}
+/* cria os pontos de início/fim de estrada de chão nos limites com o asfalto (marcados na mão
+   ao traçar a rota mista); não persistem sozinhos — ficam soltos no levantamento como qualquer
+   outro ponto, e são apagados junto se a rota for excluída ou reaberta */
+function criarLimitesChao(limites, nomeRota){
+  if (!limites.length) return null;
+  const contagem = {inicio: 0, fim: 0};
+  const itens = limites.map(lm => {
+    contagem[lm.tipo]++;
+    const n = contagem[lm.tipo];
+    const base = lm.tipo === "inicio" ? "Início estrada de chão" : "Fim estrada de chão";
+    return {lat: lm.lat, lng: lm.lng, nome: (n > 1 ? `${base} (${n})` : base) + ` – ${nomeRota}`};
+  });
+  return criarMarcadoresLimiteChao(itens);
+}
+/* recria marcadores de limite chão/asfalto a partir de um snapshot (lat/lng/nome já prontos) —
+   usado tanto pela criação automática quanto para restaurar ao cancelar uma reabertura */
+function criarMarcadoresLimiteChao(itens){
+  if (!itens || !itens.length) return null;
+  const ids = itens.map(it => {
+    const m = L.marker([it.lat, it.lng]);
+    m._iconeRTA = "🚧"; m._corRTA = "#7C4A03";
+    registrarDesenho(m, it.nome);
+    return m._idRTA;
+  });
+  salvarDesenhos();
+  return ids;
 }
 /* reabre uma rota concluída para pequenas alterações (usa os pontos originais) */
 function reabrirRota(id){
@@ -2074,21 +2188,31 @@ function reabrirRota(id){
   }
   map.closePopup();
   const backup = l.toGeoJSON();
+  const limitesChaoSnapshot = (l._limitesChaoRTA || []).map(mid => {
+    const mk = camadasDesenho[mid];
+    return mk ? {lat: mk.getLatLng().lat, lng: mk.getLatLng().lng, nome: mk._nomeRTA} : null;
+  }).filter(Boolean);
   backup.properties = {id:l._idRTA, nome:l._nomeRTA || "", cor:l._corRTA || "",
                        medidaManual:l._medidaManualRTA || null, pavManual:l._pavManualRTA || null,
                        medidaManualTxt:l._medidaManualTxtRTA || null, pavManualTxt:l._pavManualTxtRTA || null,
-                       pavSegs:l._pavSegsManualRTA || null,
-                       legs:l._legsRTA || null, pav:l._pavRTA || null,
+                       pavSegs:l._pavSegsManualRTA || null, segmentosManual:l._segmentosManualRTA || null,
+                       legs:l._legsRTA || null, pav:l._pavRTA || null, limitesChao:limitesChaoSnapshot.length ? limitesChaoSnapshot : null,
                        waypoints:l._waypointsRTA, origem:"levantamento"};
   grupoDesenhos.removeLayer(l);
   removerChao(id);
+  removerLimitesChao(l);
   delete camadasDesenho[id];
   salvarDesenhos();
   iniciarRotaEstrada();
   rotaBackup = backup;
   rotaNomeSugerido = backup.properties.nome || null;
   rotaCorSugerida = backup.properties.cor || null;
-  backup.properties.waypoints.forEach(([lat, lng]) => adicionarPontoRota(L.latLng(lat, lng)));
+  const segsOriginais = backup.properties.segmentosManual || [];
+  backup.properties.waypoints.forEach(([lat, lng], i) => {
+    proximoTrechoManual = i > 0 ? !!segsOriginais[i - 1] : false; // mantém o tipo original de cada trecho
+    adicionarPontoRota(L.latLng(lat, lng));
+  });
+  proximoTrechoManual = false;
   aviso("Rota reaberta: clique para estender, ↩ Desfazer para remover pontos, ✔ Concluir para salvar (✖ Cancelar volta como estava).");
 }
 function encerrarRotaEstrada(){
@@ -2100,6 +2224,7 @@ function encerrarRotaEstrada(){
   rotaMarcadores = []; rotaPontos = [];
   if (rotaPreview){ map.removeLayer(rotaPreview); rotaPreview = null; }
   rotaGeom = null; rotaLegs = null; rotaMedida = ""; rotaCalculando = false; rotaErro = false;
+  segmentosManualRota = []; proximoTrechoManual = false;
   if (rotaBanner){ map.removeControl(rotaBanner); rotaBanner = null; }
   if (rotaBackup){ // cancelou uma rota reaberta: restaura a original como estava
     const bk = rotaBackup;
@@ -2113,11 +2238,13 @@ function encerrarRotaEstrada(){
       if (pr.medidaManualTxt) layer._medidaManualTxtRTA = pr.medidaManualTxt;
       if (pr.pavManualTxt) layer._pavManualTxtRTA = pr.pavManualTxt;
       if (pr.pavSegs) layer._pavSegsManualRTA = pr.pavSegs;
+      if (pr.segmentosManual) layer._segmentosManualRTA = pr.segmentosManual;
       if (pr.legs) layer._legsRTA = pr.legs;
       if (pr.pav) layer._pavRTA = pr.pav;
       if (pr.waypoints) layer._waypointsRTA = pr.waypoints;
       registrarDesenho(layer, pr.nome || "");
       if (layer._pavRTA || layer._pavSegsManualRTA?.length) renderizarChao(layer);
+      if (pr.limitesChao) layer._limitesChaoRTA = criarMarcadoresLimiteChao(pr.limitesChao);
     }});
     salvarDesenhos();
   }
@@ -2232,12 +2359,16 @@ async function inserirMediaKm(){
   anexar(`Média das distâncias (${kms.length} ponto${kms.length > 1 ? "s" : ""}): ` +
     media.toLocaleString("pt-BR", {maximumFractionDigits:2}) + " km");
 }
+/* texto de coordenada igual ao usado no bloco COORDENADAS: (-12.035742°, -48.545167°) */
+function coordTxtPrancha(lat, lng){
+  return ` (${lat.toFixed(6)}°, ${lng.toFixed(6)}°)`;
+}
 function itensLegendaPrancha(){
   const itens = [], vb = map.getBounds();
   pontosFixos.forEach(p => {
     if (ocultosManuais.has(p.id) || !vb.contains([p.lat, p.lng])) return;
     const c = CATEGORIAS[p.categoria] || CATEGORIAS.outro;
-    itens.push({tipo:"ponto", cor:p.cor || c.cor, rot:p.nome});
+    itens.push({tipo:"ponto", cor:p.cor || c.cor, rot:p.nome + coordTxtPrancha(p.lat, p.lng)});
   });
   const porCat = {};
   fixosArquivo.forEach(p => (porCat[p.categoria] ??= []).push(p));
@@ -2247,7 +2378,7 @@ function itensLegendaPrancha(){
     const vis = pts.filter(p => !ocultosArquivo.has(idArq(p)) && vb.contains([p.lat, p.lng]));
     if (!vis.length) return;
     const c = CATEGORIAS[cat] || CATEGORIAS.outro;
-    if (vis.length <= 8) vis.forEach(p => itens.push({tipo:"ponto", cor:c.cor, rot:p.nome}));
+    if (vis.length <= 8) vis.forEach(p => itens.push({tipo:"ponto", cor:c.cor, rot:p.nome + coordTxtPrancha(p.lat, p.lng)}));
     else itens.push({tipo:"ponto", cor:c.cor, rot:`${c.plural} (${vis.length})`});
   });
   Object.entries(camadasRotasArquivo).forEach(([nome, o]) => {
@@ -2260,7 +2391,8 @@ function itensLegendaPrancha(){
     const cor = l._corRTA || "#DC2626";
     const nome = l._nomeRTA || "(sem nome)";
     if (l instanceof L.Marker){
-      if (vb.contains(l.getLatLng())) itens.push({tipo:"ponto", cor, rot:nome});
+      const ll = l.getLatLng();
+      if (vb.contains(ll)) itens.push({tipo:"ponto", cor, rot:nome + coordTxtPrancha(ll.lat, ll.lng)});
     } else if (l.getBounds && vb.intersects(l.getBounds())){
       const {medida} = infoGeom(l);
       itens.push({tipo:"linha", cor, rot:nome + (medida ? ` · ${medida}` : "")});
