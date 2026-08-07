@@ -305,16 +305,21 @@
         Distância manual (opcional — sobrescreve o cálculo automático na legenda e na média)</label>
       <input type="text" id="mini-distancia" placeholder="Ex.: 34,90 km">
     </div>
-    <div id="mini-pavimento-wrap" style="display:none; gap:8px; margin-top:8px">
-      <div style="flex:1">
-        <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:3px">
-          Km pavimentado (manual)</label>
-        <input type="text" id="mini-pav" placeholder="Ex.: 6,80">
+    <div id="mini-pavimento-wrap" style="display:none; flex-direction:column; gap:6px; margin-top:8px">
+      <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:-3px">Pavimento</label>
+      <div style="display:flex; gap:6px">
+        <button type="button" class="btn secundario" style="flex:1; padding:6px; font-size:12px" onclick="preencherPavRapido('pav')">🛣️ Tudo com pavimento</button>
+        <button type="button" class="btn secundario" style="flex:1; padding:6px; font-size:12px" onclick="preencherPavRapido('chao')">🟤 Tudo sem pavimentação</button>
       </div>
-      <div style="flex:1">
-        <label style="font-size:12px; font-weight:600; color:#334155; display:block; margin-bottom:3px">
-          Km estrada de chão (manual)</label>
-        <input type="text" id="mini-chao" placeholder="Ex.: 58,87">
+      <div style="display:flex; gap:8px">
+        <div style="flex:1">
+          <label style="font-size:12px; color:#64748B; display:block; margin-bottom:3px">Km pavimentado (manual)</label>
+          <input type="text" id="mini-pav" placeholder="Ex.: 6,80">
+        </div>
+        <div style="flex:1">
+          <label style="font-size:12px; color:#64748B; display:block; margin-bottom:3px">Km estrada de chão (manual)</label>
+          <input type="text" id="mini-chao" placeholder="Ex.: 58,87">
+        </div>
       </div>
     </div>
     <div id="mini-coords-wrap" style="display:none; flex-direction:column; gap:8px; margin-top:8px">
@@ -534,9 +539,16 @@ function dialogoNome(titulo, valorInicial, cb){
 /* igual ao dialogoNome, mas com a cor do desenho — e ícone/coordenadas (se for ponto)
    ou distância e pavimento manuais (se for rota) — usado ao desenhar/renomear qualquer
    elemento do levantamento. opts: {cor, icone, comIcone, distancia, comDistancia,
-   lat, lng, comCoords, pav, chao, comPavimento} */
+   lat, lng, comCoords, pav, chao, comPavimento, totalM} */
+let miniPavTotalM = null; // extensão da rota (m), pros botões "tudo pavimentado/tudo chão"
+function preencherPavRapido(tipo){
+  if (miniPavTotalM == null) return;
+  const km = (miniPavTotalM / 1000).toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2});
+  document.getElementById("mini-pav").value = tipo === "pav" ? km : "0";
+  document.getElementById("mini-chao").value = tipo === "chao" ? km : "0";
+}
 function dialogoNomeDesenho(titulo, valorInicial, opts, cb){
-  const {cor, icone, comIcone, distancia, comDistancia, lat, lng, comCoords, pav, chao, comPavimento} = opts;
+  const {cor, icone, comIcone, distancia, comDistancia, lat, lng, comCoords, pav, chao, comPavimento, totalM} = opts;
   document.getElementById("mini-titulo").textContent = titulo;
   const inp = document.getElementById("mini-input");
   inp.style.display = "block"; inp.value = valorInicial || "";
@@ -548,6 +560,7 @@ function dialogoNomeDesenho(titulo, valorInicial, opts, cb){
   document.getElementById("mini-distancia-wrap").style.display = comDistancia ? "" : "none";
   if (comDistancia) document.getElementById("mini-distancia").value = distancia || "";
   document.getElementById("mini-pavimento-wrap").style.display = comPavimento ? "flex" : "none";
+  miniPavTotalM = comPavimento ? (totalM ?? null) : null;
   if (comPavimento){
     document.getElementById("mini-pav").value = pav || "";
     document.getElementById("mini-chao").value = chao || "";
@@ -1404,6 +1417,19 @@ function encerrarMarcacaoPavimento(){
   marcacaoPav = null;
 }
 
+/* achata getLatLngs() (rota simples ou com múltiplas pernas) em [[lat,lng],...],
+   no mesmo formato que _pavSegsManualRTA usa (igual ao clique-em-2-pontos) */
+function latlngsPlanos(layer){
+  const lls = layer.getLatLngs();
+  return (Array.isArray(lls[0]) ? lls.flat() : lls).map(p => [p.lat, p.lng]);
+}
+/* distância "de verdade" de uma rota (m): manual digitada > soma pav+chão manual >
+   geometria — mesma prioridade usada pra mostrar a medida em qualquer lugar */
+function medidaRotaM(layer){
+  if (layer._medidaManualRTA) return layer._medidaManualRTA;
+  if (layer._pavManualRTA) return layer._pavManualRTA.pav + layer._pavManualRTA.chao;
+  return distanciaMetros(layer.getLatLngs());
+}
 function infoGeom(layer){
   if (layer instanceof L.Marker) return {tipo:"Ponto", medida:""};
   if (layer instanceof L.Polygon){
@@ -1414,11 +1440,7 @@ function infoGeom(layer){
     // distância manual: mostra exatamente o texto digitado, com todas as casas
     // decimais que ela usar (fmtDist arredondaria pra só 2)
     if (layer._medidaManualTxtRTA) return {tipo:"Rota", medida: layer._medidaManualTxtRTA};
-    // sem distância manual explícita, mas com pavimento manual: soma pav+chão
-    // (senão a distância total ficaria incoerente com o chão informado)
-    const totalPav = layer._pavManualRTA ? layer._pavManualRTA.pav + layer._pavManualRTA.chao : null;
-    const d = layer._medidaManualRTA || totalPav || distanciaMetros(layer.getLatLngs());
-    return {tipo:"Rota", medida:fmtDist(d)};
+    return {tipo:"Rota", medida:fmtDist(medidaRotaM(layer))};
   }
   return {tipo:"Elemento", medida:""};
 }
@@ -1496,6 +1518,7 @@ function salvarDesenhos(){
                     medidaManual:l._medidaManualRTA || null, pavManual:l._pavManualRTA || null,
                     medidaManualTxt:l._medidaManualTxtRTA || null, pavManualTxt:l._pavManualTxtRTA || null,
                     pavSegs:l._pavSegsManualRTA || null, segmentosManual:l._segmentosManualRTA || null,
+                    pavimentoManual:l._segmentosPavimentoRTA || null,
                     legs:l._legsRTA || null, pav:l._pavRTA || null,
                     waypoints:l._waypointsRTA || null, origem:"levantamento"};
     fc.features.push(f);
@@ -1566,6 +1589,7 @@ function kmlDeDesenhos(camadas, nomeDoc){
                    medidaManual:l._medidaManualRTA || null, pavManual:l._pavManualRTA || null,
                    medidaManualTxt:l._medidaManualTxtRTA || null, pavManualTxt:l._pavManualTxtRTA || null,
                    pavSegs:l._pavSegsManualRTA || null, segmentosManual:l._segmentosManualRTA || null,
+                   pavimentoManual:l._segmentosPavimentoRTA || null,
                    legs:l._legsRTA || null, pav:l._pavRTA || null,
                    waypoints:l._waypointsRTA || null, origem:"levantamento"};
     const ext = `<ExtendedData><Data name="geoportal"><value>${escXml(JSON.stringify(props))}</value></Data></ExtendedData>`;
@@ -1640,6 +1664,7 @@ function importarKmlLevantamento(texto){
     if (props.pavManualTxt) layer._pavManualTxtRTA = props.pavManualTxt;
     if (props.pavSegs) layer._pavSegsManualRTA = props.pavSegs;
     if (props.segmentosManual) layer._segmentosManualRTA = props.segmentosManual;
+    if (props.pavimentoManual) layer._segmentosPavimentoRTA = props.pavimentoManual;
     if (props.legs) layer._legsRTA = props.legs;
     if (props.pav) layer._pavRTA = props.pav;
     if (props.waypoints) layer._waypointsRTA = props.waypoints;
@@ -1649,6 +1674,45 @@ function importarKmlLevantamento(texto){
   });
   salvarDesenhos();
   aviso(`Importado do KML: ${n} elemento(s) de levantamento.`);
+}
+/* aplica distância manual e pavimento (digitados ou pelos botões "tudo pavimentado/tudo
+   chão") numa rota — usada tanto ao renomear/editar quanto já na hora de desenhar */
+function aplicarDistanciaEPavimento(l, dados){
+  l._medidaManualRTA = parseDistanciaManualM(dados.distancia) || undefined;
+  l._medidaManualTxtRTA = textoDistanciaManual(dados.distancia) || undefined;
+  const pavAntes = l._pavManualRTA;
+  const pavM = parseDistanciaManualM(dados.pav);
+  const chaoM = parseDistanciaManualM(dados.chao);
+  if (pavM || chaoM){
+    const novo = {pav: pavM || 0, chao: chaoM || 0};
+    // só descarta os trechos clicados no mapa se ela de fato digitou um valor
+    // diferente do que já estava lá (só reabrir e clicar OK não apaga nada)
+    // compara arredondado (o campo só mostra 2 casas de km = 10 m) pra não confundir
+    // arredondamento de exibição com uma mudança de verdade
+    const r10 = m => Math.round(m / 10);
+    const mudou = !pavAntes || r10(pavAntes.pav) !== r10(novo.pav) || r10(pavAntes.chao) !== r10(novo.chao);
+    l._pavManualRTA = novo;
+    // preserva todas as casas decimais do que ela digitou; o que ela não
+    // digitou (fica implícito no "resto") mostra formatado normal
+    l._pavManualTxtRTA = {
+      pav: textoDistanciaManual(dados.pav) || fmtDist(novo.pav),
+      chao: textoDistanciaManual(dados.chao) || fmtDist(novo.chao),
+    };
+    if (mudou){
+      // caso "tudo pavimentado" ou "tudo sem pavimentação" (os botões de atalho): não tem
+      // ambiguidade de onde fica o quê, então já desenha o traçado inteiro tracejado (ou some
+      // com o tracejado, se for tudo pavimentado) — split parcial digitado à mão continua sem
+      // desenho, porque não dá pra saber em que trecho do traçado cai cada parte
+      if (novo.chao === 0 && novo.pav > 0) l._pavSegsManualRTA = [{tipo:"asfalto", coords: latlngsPlanos(l)}];
+      else if (novo.pav === 0 && novo.chao > 0) l._pavSegsManualRTA = [{tipo:"chao", coords: latlngsPlanos(l)}];
+      else l._pavSegsManualRTA = undefined;
+    }
+  } else if (pavAntes){
+    l._pavManualRTA = undefined;
+    l._pavManualTxtRTA = undefined;
+    l._pavSegsManualRTA = undefined; // limpou os dois campos: volta pro automático
+  }
+  renderizarChao(l);
 }
 function renomearDesenho(id){
   const l = camadasDesenho[id];
@@ -1671,7 +1735,7 @@ function renomearDesenho(id){
   dialogoNomeDesenho(titulo, l._nomeRTA || "", {
     cor: l._corRTA, icone: l._iconeRTA, comIcone: ehMarcador,
     distancia: distanciaAtual, comDistancia: ehRota,
-    pav: pavAtual, chao: chaoAtual, comPavimento: ehRota,
+    pav: pavAtual, chao: chaoAtual, comPavimento: ehRota, totalM: ehRota ? medidaRotaM(l) : null,
     lat: pos && pos.lat, lng: pos && pos.lng, comCoords: ehMarcador,
   }, (nome, dados) => {
     if (nome) l._nomeRTA = nome;
@@ -1683,35 +1747,7 @@ function renomearDesenho(id){
       if (!isNaN(dados.lat) && !isNaN(dados.lng)) l.setLatLng([dados.lat, dados.lng]);
     } else {
       if (l.setStyle) l.setStyle({color: l._corRTA});
-      if (ehRota){
-        l._medidaManualRTA = parseDistanciaManualM(dados.distancia) || undefined;
-        l._medidaManualTxtRTA = textoDistanciaManual(dados.distancia) || undefined;
-        const pavAntes = l._pavManualRTA;
-        const pavM = parseDistanciaManualM(dados.pav);
-        const chaoM = parseDistanciaManualM(dados.chao);
-        if (pavM || chaoM){
-          const novo = {pav: pavM || 0, chao: chaoM || 0};
-          // só descarta os trechos clicados no mapa se ela de fato digitou um valor
-          // diferente do que já estava lá (só reabrir e clicar OK não apaga nada)
-          // compara arredondado (o campo só mostra 2 casas de km = 10 m) pra não confundir
-          // arredondamento de exibição com uma mudança de verdade
-          const r10 = m => Math.round(m / 10);
-          const mudou = !pavAntes || r10(pavAntes.pav) !== r10(novo.pav) || r10(pavAntes.chao) !== r10(novo.chao);
-          l._pavManualRTA = novo;
-          // preserva todas as casas decimais do que ela digitou; o que ela não
-          // digitou (fica implícito no "resto") mostra formatado normal
-          l._pavManualTxtRTA = {
-            pav: textoDistanciaManual(dados.pav) || fmtDist(novo.pav),
-            chao: textoDistanciaManual(dados.chao) || fmtDist(novo.chao),
-          };
-          if (mudou) l._pavSegsManualRTA = undefined;
-        } else if (pavAntes){
-          l._pavManualRTA = undefined;
-          l._pavManualTxtRTA = undefined;
-          l._pavSegsManualRTA = undefined; // limpou os dois campos: volta pro automático
-        }
-        renderizarChao(l);
-      }
+      if (ehRota) aplicarDistanciaEPavimento(l, dados);
     }
     l.closePopup();
     salvarDesenhos();
@@ -1751,6 +1787,20 @@ map.on("pm:create", ev => {
     });
     return;
   }
+  if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)){
+    // rota desenhada na mão (não é a 🛣️ pela estrada): já pergunta se é
+    // pavimentada ou estrada de chão, sem precisar reabrir depois pra editar
+    dialogoNomeDesenho(`Nome, cor, distância e pavimento (${tipo}${medida ? " · " + medida : ""})`, sugestao,
+      {cor: layer._corRTA, comDistancia:true, comPavimento:true, totalM: medidaRotaM(layer)},
+      (nome, dados) => {
+        if (nome) layer._nomeRTA = nome;
+        layer._corRTA = dados.cor;
+        layer.setStyle({color: layer._corRTA});
+        aplicarDistanciaEPavimento(layer, dados);
+        salvarDesenhos();
+      });
+    return;
+  }
   dialogoNome(`Nome (${tipo}${medida ? " · " + medida : ""})`, sugestao, nome => {
     if (nome) layer._nomeRTA = nome;
     salvarDesenhos();
@@ -1772,6 +1822,7 @@ function carregarDesenhos(){
         if (feat.properties?.pavManualTxt) layer._pavManualTxtRTA = feat.properties.pavManualTxt;
         if (feat.properties?.pavSegs) layer._pavSegsManualRTA = feat.properties.pavSegs;
         if (feat.properties?.segmentosManual) layer._segmentosManualRTA = feat.properties.segmentosManual;
+        if (feat.properties?.pavimentoManual) layer._segmentosPavimentoRTA = feat.properties.pavimentoManual;
         if (feat.properties?.legs) layer._legsRTA = feat.properties.legs;
         if (feat.properties?.pav) layer._pavRTA = feat.properties.pav;
         if (feat.properties?.waypoints) layer._waypointsRTA = feat.properties.waypoints;
@@ -1924,6 +1975,7 @@ document.getElementById("arquivo-importar").addEventListener("change", ev => {
             if (p.pavManualTxt) layer._pavManualTxtRTA = p.pavManualTxt;
             if (p.pavSegs) layer._pavSegsManualRTA = p.pavSegs;
             if (p.segmentosManual) layer._segmentosManualRTA = p.segmentosManual;
+            if (p.pavimentoManual) layer._segmentosPavimentoRTA = p.pavimentoManual;
             if (p.legs) layer._legsRTA = p.legs;
             if (p.pav) layer._pavRTA = p.pav;
             if (p.waypoints) layer._waypointsRTA = p.waypoints;
@@ -1964,6 +2016,8 @@ let rotaAbort = null;
 let rotaErro = false;
 let segmentosManualRota = [];   // um por trecho entre pontos (true = ela desenhou na mão)
 let proximoTrechoManual = false; // modo ativo pro PRÓXIMO clique
+let pavimentoManualRota = [];    // um por trecho manual: "chao" ou "pav" (irrelevante nos trechos pela estrada)
+let pavimentoManualProximo = "chao"; // pavimento do PRÓXIMO trecho manual
 
 function bannerRotaHtml(){
   const n = rotaPontos.length;
@@ -1979,17 +2033,25 @@ function bannerRotaHtml(){
             : "border:1px solid #fff; background:transparent; color:#fff"}">${rotulo}</button>`;
   const modoBtn = `<button id="rota-modo-manual" style="width:100%; margin-top:6px; padding:5px 7px;
       border-radius:5px; cursor:pointer; text-align:left; border:1px solid #fff;
-      background:${proximoTrechoManual ? "#7C4A03" : "transparent"}; color:#fff; ${proximoTrechoManual ? "font-weight:700" : ""}">
+      background:${proximoTrechoManual ? (pavimentoManualProximo === "chao" ? "#7C4A03" : "#334155") : "transparent"};
+      color:#fff; ${proximoTrechoManual ? "font-weight:700" : ""}">
       ${proximoTrechoManual
-        ? "📍 Próximo trecho: NA MÃO (clique pra voltar a seguir a estrada)"
+        ? `📍 Próximo trecho: NA MÃO — ${pavimentoManualProximo === "chao" ? "sem pavimentação" : "com pavimentação"} (clique pra voltar a seguir a estrada)`
         : "🛣️ Próximo trecho: pela estrada (clique pra desenhar na mão)"}
     </button>`;
+  const pavBtn = (id, rotulo, ativo, cor) =>
+    `<button id="${id}" style="flex:1; padding:4px 6px; border-radius:5px; cursor:pointer; font-size:11px; white-space:nowrap;
+      border:1px solid #fff; background:${ativo ? cor : "transparent"}; color:#fff; ${ativo ? "font-weight:700" : ""}">${rotulo}</button>`;
+  const pavRow = proximoTrechoManual ? `<div style="display:flex; gap:5px; margin-top:4px">
+      ${pavBtn("rota-pav-chao", "🟤 Sem pavimentação", pavimentoManualProximo === "chao", "#7C4A03")}
+      ${pavBtn("rota-pav-asfalto", "⬛ Com pavimentação", pavimentoManualProximo === "pav", "#334155")}
+    </div>` : "";
   return `<b>🛣️ Rota pela estrada</b><br>${status}
     <div style="display:flex; gap:5px; margin-top:6px">
       ${rotaGeom && !rotaCalculando ? btn("rota-concluir", "✔ Concluir", true) : ""}
       ${n > 0 ? btn("rota-desfazer", "↩ Desfazer") : ""}
       ${btn("rota-cancelar", "✖ Cancelar")}
-    </div>${modoBtn}`;
+    </div>${modoBtn}${pavRow}`;
 }
 function atualizarBannerRota(){
   if (!rotaBanner) return;
@@ -2002,12 +2064,15 @@ function atualizarBannerRota(){
   ligar("rota-desfazer", desfazerPontoRota);
   ligar("rota-cancelar", encerrarRotaEstrada);
   ligar("rota-modo-manual", () => { proximoTrechoManual = !proximoTrechoManual; atualizarBannerRota(); });
+  ligar("rota-pav-chao", () => { pavimentoManualProximo = "chao"; atualizarBannerRota(); });
+  ligar("rota-pav-asfalto", () => { pavimentoManualProximo = "pav"; atualizarBannerRota(); });
 }
 function iniciarRotaEstrada(){
   if (rotaAtiva) return;
   rotaAtiva = true;
   rotaPontos = []; rotaMarcadores = [];
   segmentosManualRota = []; proximoTrechoManual = false;
+  pavimentoManualRota = []; pavimentoManualProximo = "chao";
   rotaGeom = null; rotaMedida = ""; rotaErro = false;
   document.getElementById("painel").classList.remove("aberto");
   map.closePopup();
@@ -2028,8 +2093,12 @@ function cliqueRotaEstrada(ev){ adicionarPontoRota(ev.latlng); }
 function adicionarPontoRota(latlng){
   if (!rotaAtiva) return;
   rotaPontos.push(latlng);
-  if (rotaPontos.length >= 2) segmentosManualRota.push(proximoTrechoManual);
-  const corPonto = proximoTrechoManual && rotaPontos.length >= 2 ? "#7C4A03" : "#1E3A72";
+  if (rotaPontos.length >= 2){
+    segmentosManualRota.push(proximoTrechoManual);
+    pavimentoManualRota.push(proximoTrechoManual ? pavimentoManualProximo : null);
+  }
+  const corPonto = !proximoTrechoManual || rotaPontos.length < 2 ? "#1E3A72"
+    : pavimentoManualProximo === "chao" ? "#7C4A03" : "#334155";
   const m = L.marker(latlng, {icon: L.divIcon({
     className:"",
     html:`<div style="width:22px;height:22px;border-radius:50%;background:${corPonto};color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${rotaPontos.length}</div>`,
@@ -2043,6 +2112,7 @@ function desfazerPontoRota(){
   if (!rotaPontos.length) return;
   rotaPontos.pop();
   if (segmentosManualRota.length) segmentosManualRota.pop();
+  if (pavimentoManualRota.length) pavimentoManualRota.pop();
   map.removeLayer(rotaMarcadores.pop());
   rotaErro = false;
   if (rotaPontos.length >= 2) recalcularRotaEstrada();
@@ -2052,31 +2122,50 @@ function desfazerPontoRota(){
     atualizarBannerRota();
   }
 }
-/* agrupa segmentos consecutivos do mesmo tipo (manual/estrada) em trechos, cada um
-   com o intervalo de índices de rotaPontos que ele cobre */
-function agruparTrechosRota(segmentos){
-  if (!segmentos.length) return [];
-  const trechos = [];
+/* agrupa índices consecutivos com a mesma chave em trechos {chave, de, ate} */
+function agruparPorChave(chaves){
+  if (!chaves.length) return [];
+  const grupos = [];
   let inicio = 0;
-  for (let i = 1; i <= segmentos.length; i++){
-    if (i === segmentos.length || segmentos[i] !== segmentos[inicio]){
-      trechos.push({manual: segmentos[inicio], de: inicio, ate: i});
+  for (let i = 1; i <= chaves.length; i++){
+    if (i === chaves.length || chaves[i] !== chaves[inicio]){
+      grupos.push({chave: chaves[inicio], de: inicio, ate: i});
       inicio = i;
     }
   }
-  return trechos;
+  return grupos;
+}
+/* agrupa segmentos consecutivos do mesmo tipo (manual/estrada) em trechos, cada um
+   com o intervalo de índices de rotaPontos que ele cobre */
+function agruparTrechosRota(segmentos){
+  return agruparPorChave(segmentos).map(g => ({manual: g.chave, de: g.de, ate: g.ate}));
 }
 /* acha as transições estrada<->chão dentro dos pontos clicados: cada troca de tipo entre um
    trecho e o seguinte é o limite (o ponto em comum entre os dois). Pontas da rota que já
-   começam/terminam de chão não contam (não é limite "entre" asfalto e chão, é a rota toda) */
-function limitesChaoDaRota(pontos, segmentos){
+   começam/terminam de chão não contam (não é limite "entre" asfalto e chão, é a rota toda).
+   Trecho manual COM pavimentação não conta como chão — é asfalto que só não tá no OSM */
+function limitesChaoDaRota(pontos, segmentos, pavimentos){
+  const isChao = segmentos.map((m, i) => m && pavimentos[i] === "chao");
   const limites = [];
-  for (let i = 1; i < segmentos.length; i++){
-    if (segmentos[i] === segmentos[i - 1]) continue;
+  for (let i = 1; i < isChao.length; i++){
+    if (isChao[i] === isChao[i - 1]) continue;
     const p = pontos[i];
-    limites.push({lat: p.lat, lng: p.lng, tipo: segmentos[i] ? "inicio" : "fim"});
+    limites.push({lat: p.lat, lng: p.lng, tipo: isChao[i] ? "inicio" : "fim"});
   }
   return limites;
+}
+/* trechos manuais (mão) viram segmentos de pavimento explícitos — chão ou asfalto —
+   pra não deixar a análise automática (Valhalla) chutar errado num traçado que não
+   segue nenhuma estrada real. Trechos pela estrada não entram aqui: a análise
+   automática cuida deles */
+function segsPavimentoManual(pontos, segmentos, pavimentos){
+  const chaves = segmentos.map((m, i) => m ? "m:" + pavimentos[i] : "e");
+  return agruparPorChave(chaves)
+    .filter(g => g.chave.startsWith("m:"))
+    .map(g => ({
+      tipo: g.chave === "m:chao" ? "chao" : "asfalto",
+      coords: pontos.slice(g.de, g.ate + 1).map(p => [+p.lat.toFixed(6), +p.lng.toFixed(6)]),
+    }));
 }
 async function recalcularRotaEstrada(){
   if (rotaAbort) rotaAbort.abort();
@@ -2129,14 +2218,24 @@ function concluirRotaEstrada(){
   linha._legsRTA = rotaLegs && rotaLegs.length ? rotaLegs : null;
   linha._waypointsRTA = rotaPontos.map(p => [+p.lat.toFixed(6), +p.lng.toFixed(6)]);
   linha._segmentosManualRTA = segmentosManualRota.some(Boolean) ? [...segmentosManualRota] : null;
+  linha._segmentosPavimentoRTA = segmentosManualRota.some(Boolean) ? [...pavimentoManualRota] : null;
   if (rotaCorSugerida) linha._corRTA = rotaCorSugerida;
   const medida = rotaMedida;
   const sugestao = rotaNomeSugerido || ("Rota " + (Object.keys(camadasDesenho).length + 1));
-  const limites = limitesChaoDaRota(rotaPontos, segmentosManualRota); // antes de encerrar (limpa rotaPontos)
+  // tudo isso antes de encerrar (que limpa rotaPontos/segmentosManualRota/pavimentoManualRota)
+  const limites = limitesChaoDaRota(rotaPontos, segmentosManualRota, pavimentoManualRota);
+  const pavManual = segsPavimentoManual(rotaPontos, segmentosManualRota, pavimentoManualRota);
   rotaNomeSugerido = null; rotaCorSugerida = null;
   encerrarRotaEstrada();
   registrarDesenho(linha, sugestao);
   linha._limitesChaoRTA = criarLimitesChao(limites, sugestao);
+  if (pavManual.length){
+    // trecho(s) desenhado(s) na mão já vira(m) pavimento definitivo — não espera a
+    // análise automática, que chutaria errado num traçado fora da estrada real
+    linha._pavSegsManualRTA = pavManual;
+    recomputarPavManual(linha);
+    renderizarChao(linha);
+  }
   salvarDesenhos();
   dialogoNome(`Nome (Rota pela estrada · ${medida})`, sugestao, nome => {
     if (nome && nome !== sugestao){
@@ -2196,6 +2295,7 @@ function reabrirRota(id){
                        medidaManual:l._medidaManualRTA || null, pavManual:l._pavManualRTA || null,
                        medidaManualTxt:l._medidaManualTxtRTA || null, pavManualTxt:l._pavManualTxtRTA || null,
                        pavSegs:l._pavSegsManualRTA || null, segmentosManual:l._segmentosManualRTA || null,
+                       pavimentoManual:l._segmentosPavimentoRTA || null,
                        legs:l._legsRTA || null, pav:l._pavRTA || null, limitesChao:limitesChaoSnapshot.length ? limitesChaoSnapshot : null,
                        waypoints:l._waypointsRTA, origem:"levantamento"};
   grupoDesenhos.removeLayer(l);
@@ -2208,11 +2308,13 @@ function reabrirRota(id){
   rotaNomeSugerido = backup.properties.nome || null;
   rotaCorSugerida = backup.properties.cor || null;
   const segsOriginais = backup.properties.segmentosManual || [];
+  const pavsOriginais = backup.properties.pavimentoManual || [];
   backup.properties.waypoints.forEach(([lat, lng], i) => {
     proximoTrechoManual = i > 0 ? !!segsOriginais[i - 1] : false; // mantém o tipo original de cada trecho
+    pavimentoManualProximo = i > 0 ? (pavsOriginais[i - 1] || "chao") : "chao";
     adicionarPontoRota(L.latLng(lat, lng));
   });
-  proximoTrechoManual = false;
+  proximoTrechoManual = false; pavimentoManualProximo = "chao";
   aviso("Rota reaberta: clique para estender, ↩ Desfazer para remover pontos, ✔ Concluir para salvar (✖ Cancelar volta como estava).");
 }
 function encerrarRotaEstrada(){
@@ -2225,6 +2327,7 @@ function encerrarRotaEstrada(){
   if (rotaPreview){ map.removeLayer(rotaPreview); rotaPreview = null; }
   rotaGeom = null; rotaLegs = null; rotaMedida = ""; rotaCalculando = false; rotaErro = false;
   segmentosManualRota = []; proximoTrechoManual = false;
+  pavimentoManualRota = []; pavimentoManualProximo = "chao";
   if (rotaBanner){ map.removeControl(rotaBanner); rotaBanner = null; }
   if (rotaBackup){ // cancelou uma rota reaberta: restaura a original como estava
     const bk = rotaBackup;
@@ -2239,6 +2342,7 @@ function encerrarRotaEstrada(){
       if (pr.pavManualTxt) layer._pavManualTxtRTA = pr.pavManualTxt;
       if (pr.pavSegs) layer._pavSegsManualRTA = pr.pavSegs;
       if (pr.segmentosManual) layer._segmentosManualRTA = pr.segmentosManual;
+      if (pr.pavimentoManual) layer._segmentosPavimentoRTA = pr.pavimentoManual;
       if (pr.legs) layer._legsRTA = pr.legs;
       if (pr.pav) layer._pavRTA = pr.pav;
       if (pr.waypoints) layer._waypointsRTA = pr.waypoints;
