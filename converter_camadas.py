@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import geopandas as gpd
+from dbfread import DBF
 
 BASE = Path(__file__).parent
 CAMADAS = BASE / "camadas"
@@ -175,4 +176,75 @@ if shp_cid.exists():
     "const DADOS_ROTAS = " + json.dumps(rotas, ensure_ascii=False) + ";\n",
     encoding="utf-8")
 print(f"Gerado pontos_fixos.js ({len(fixos)} pontos, {descartados} sem categoria ignorados)")
+
+# ---------------------------------------------------------------------------
+# Trechos (fontes/TRECHOS/R<num>_TRECHOS.shp): linhas de rodovia agrupadas
+# pela coluna "Id" — um trecho pode ter várias linhas (um por SRE/segmento).
+# Os nomes de coluna variam MUITO de região pra região (TRECHO/TRECHOS,
+# EXTENSÃO/extenção/EXT_REAL/EXTENÇÃO/EXTENSÃ_1...), então a busca é por
+# prefixo, não pelo nome exato. Encoding do .dbf é UTF-8 mesmo (o .cpg está
+# certo aqui) — testado nas 6 regiões, zero erro de decode.
+# ---------------------------------------------------------------------------
+PASTA_TRECHOS = BASE / "fontes" / "TRECHOS"
+LIMPA = lambda v: str(v).replace("\r\n", " ").replace("\n", " ").strip()
+
+def campo_por_prefixo(colunas, prefixo):
+    return next((c for c in colunas if c.upper().startswith(prefixo)), None)
+
+def comprimento_km(coords_latlng):
+    """soma geodésica (Haversine) de uma linha [[lat,lng],...] — usa a geometria
+    em vez da coluna EXTENSÃO/EXT_REAL/etc. porque essa coluna vem em unidades
+    diferentes em cada região (km numas, metro noutras) e não dá pra confiar"""
+    total = 0.0
+    for (la1, lo1), (la2, lo2) in zip(coords_latlng, coords_latlng[1:]):
+        total += dist_m({"lat": la1, "lng": lo1}, {"lat": la2, "lng": lo2})
+    return total / 1000
+
+trechos = []
+if PASTA_TRECHOS.exists():
+    for shp in sorted(PASTA_TRECHOS.glob("*_TRECHOS.shp")):
+        # geometria pelo geopandas (encoding não afeta coordenada); atributos
+        # (nomes) pelo dbfread em UTF-8 (o .cpg está certo aqui — confirmado
+        # sem nenhum erro de decode nos 6 arquivos; é o GDAL/pyogrio que
+        # embananava os acentos ao ler o .dbf junto com a geometria)
+        gdf = gpd.read_file(shp).to_crs(epsg=4326)
+        registros = list(DBF(shp.with_suffix(".dbf"), encoding="utf-8", char_decode_errors="replace"))
+        if len(registros) != len(gdf):
+            print(f"{shp.name}: dbfread e geopandas discordam no nº de linhas, ignorado")
+            continue
+        cols = registros[0].keys()
+        c_id = "Id" if "Id" in cols else campo_por_prefixo(cols, "ID")
+        c_nome = campo_por_prefixo(cols, "TRECHO")
+        c_sit = campo_por_prefixo(cols, "SITUA")
+        if not c_id:
+            print(f"{shp.name}: sem coluna Id, ignorado")
+            continue
+        grupos = {}  # id -> lista de índices de linha
+        for i, reg in enumerate(registros):
+            grupos.setdefault(reg[c_id], []).append(i)
+        for id_val, idxs in grupos.items():
+            linhas, ext_km = [], 0.0
+            for i in idxs:
+                geom = gdf.geometry.iloc[i]
+                partes = geom.geoms if geom.geom_type == "MultiLineString" else [geom]
+                for parte in partes:
+                    coords = [[round(lat, 6), round(lng, 6)] for lng, lat in parte.coords]
+                    linhas.append(coords)
+                    ext_km += comprimento_km(coords)
+            primeiro = registros[idxs[0]]
+            trechos.append({
+                "id": int(id_val),
+                "nome": LIMPA(primeiro[c_nome]) if c_nome else f"Trecho {id_val}",
+                "rodovia": LIMPA(primeiro["RODOVIA"]) if "RODOVIA" in cols else "",
+                "situacao": LIMPA(primeiro[c_sit]) if c_sit else "",
+                "extensao_km": round(ext_km, 2),
+                "regiao": int(re.match(r"R(\d+)_", shp.stem).group(1)),
+                "coords": linhas,
+            })
+        print(f"{shp.name}: {len(grupos)} trecho(s) ({len(gdf)} linha(s))")
+
+(DADOS / "trechos.js").write_text(
+    "const DADOS_TRECHOS = " + json.dumps(trechos, ensure_ascii=False) + ";\n",
+    encoding="utf-8")
+print(f"Gerado trechos.js ({len(trechos)} trechos)")
 print(f"Gerado rotas.js ({len(rotas)} rotas)")

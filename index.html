@@ -404,6 +404,7 @@
 <script src="dados/regioes.js"></script>
 <script src="dados/pontos_fixos.js"></script>
 <script src="dados/rotas.js"></script>
+<script src="dados/trechos.js"></script>
 <script>
 "use strict";
 /* ================= Configuração ================= */
@@ -820,6 +821,7 @@ function renderizarTodosFixos(){
   pontosFixos.forEach(p => (porCategoria[p.categoria] ??= []).push({tipo:"manual", p}));
   if (!Object.keys(porCategoria).length){
     raiz.innerHTML = `<div class="vazio">Nenhum ponto fixo cadastrado ainda.</div>`;
+    renderizarTrechos();
     return;
   }
 
@@ -949,6 +951,7 @@ function renderizarTodosFixos(){
       det.appendChild(corpo);
       raiz.appendChild(det);
     });
+  renderizarTrechos(); // reinsere o grupo Trechos (essa função limpou lista-fixos-arquivo)
 }
 function renderizarFixosArquivo(){ renderizarTodosFixos(); }
 
@@ -991,6 +994,121 @@ function renderizarRotasArquivo(){
     });
     raiz.appendChild(el);
   });
+}
+
+/* ================= Trechos (dados/trechos.js) =================
+   Linhas de rodovia (fontes/TRECHOS/*.shp) agrupadas por "Id" — a equipe
+   busca pelo número da coluna Id e usa 🎯 Só este pra isolar exatamente
+   o trecho que vai levantar. Fica dentro de "📌 Pontos fixos" (mesma pasta
+   de referência de arquivo), mas com render própria porque é linha, não
+   ponto — não dá pra reaproveitar o iconeFixo() das categorias. */
+const trechosArquivo = (typeof DADOS_TRECHOS !== "undefined") ? DADOS_TRECHOS : [];
+let trechosOcultos = new Set(carregar("rta_geoportal_trechos_ocultos", []));
+const salvarTrechosOcultos = () => salvar("rta_geoportal_trechos_ocultos", [...trechosOcultos]);
+const camadasTrechos = {}; // id -> polyline
+const COR_TRECHO = "#7C3AED";
+
+function popupTrecho(t){
+  const ext = t.extensao_km.toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2});
+  return `<div class="pop-titulo">Id ${t.id}${t.rodovia ? " — " + esc(t.rodovia) : ""}</div>
+    <div class="pop-info">${esc(t.nome)}</div>
+    <div class="pop-info">${ext} km${t.situacao ? " · " + esc(t.situacao) : ""}</div>`;
+}
+/* deixa visível só o trecho escolhido (esconde os demais) */
+function isolarTrecho(idAlvo){
+  trechosArquivo.forEach(t => { if (t.id === idAlvo) trechosOcultos.delete(t.id); else trechosOcultos.add(t.id); });
+  salvarTrechosOcultos();
+  map.closePopup();
+  renderizarTrechos();
+  const cam = camadasTrechos[idAlvo];
+  if (cam) map.fitBounds(cam.getBounds(), {padding:[40, 40]});
+  aviso("Mostrando apenas o trecho escolhido. Use a caixa do grupo pra reexibir todos.");
+}
+function renderizarTrechos(){
+  Object.values(camadasTrechos).forEach(l => map.removeLayer(l));
+  Object.keys(camadasTrechos).forEach(k => delete camadasTrechos[k]);
+  const raizFixos = document.getElementById("lista-fixos-arquivo");
+  const antigo = raizFixos.querySelector("#trechos-grupo");
+  if (antigo) antigo.remove();
+  if (!trechosArquivo.length) return;
+
+  const det = document.createElement("details");
+  det.id = "trechos-grupo";
+  det.innerHTML = `
+    <summary class="linha-camada" style="cursor:pointer; list-style:none">
+      <span class="seta-grupo">▶</span>
+      <input type="checkbox" title="Mostrar/ocultar todos">
+      <span style="font-size:14px">🛣️</span>
+      <b style="font-size:13px">Trechos</b>
+      <span class="qt-vis" style="font-size:12px; color:var(--cinza)"></span>
+    </summary>`;
+  const chkTodos = det.querySelector("input");
+  const qtVis = det.querySelector(".qt-vis");
+  const atualizarCabecalho = () => {
+    const vis = trechosArquivo.filter(t => !trechosOcultos.has(t.id)).length;
+    qtVis.textContent = vis === trechosArquivo.length ? `(${trechosArquivo.length})` : `(${vis} de ${trechosArquivo.length} visíveis)`;
+    chkTodos.checked = vis === trechosArquivo.length;
+    chkTodos.indeterminate = vis > 0 && vis < trechosArquivo.length;
+  };
+  chkTodos.addEventListener("click", ev => ev.stopPropagation());
+  chkTodos.addEventListener("change", () => {
+    trechosArquivo.forEach(t => {
+      if (chkTodos.checked){ trechosOcultos.delete(t.id); camadasTrechos[t.id].addTo(map); }
+      else { trechosOcultos.add(t.id); map.removeLayer(camadasTrechos[t.id]); }
+    });
+    det.querySelectorAll(".chk-trecho").forEach(cb => cb.checked = chkTodos.checked);
+    atualizarCabecalho();
+    salvarTrechosOcultos();
+  });
+
+  const corpo = document.createElement("div");
+  corpo.style.cssText = "max-height:220px; overflow-y:auto; margin-left:10px";
+  const busca = document.createElement("input");
+  busca.type = "text";
+  busca.className = "busca-grupo";
+  busca.placeholder = "🔍 Buscar por Id, rodovia ou nome...";
+  const norm = s => String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  const linhasBusca = [];
+  busca.addEventListener("input", () => {
+    const termo = norm(busca.value.trim());
+    linhasBusca.forEach(r => { r.linha.style.display = !termo || r.chave.includes(termo) ? "" : "none"; });
+  });
+  corpo.appendChild(busca);
+
+  trechosArquivo.slice().sort((a, b) => a.id - b.id).forEach(t => {
+    const linha = L.polyline(t.coords, {color:COR_TRECHO, weight:4, opacity:.85}).bindPopup(() => popupTrecho(t));
+    camadasTrechos[t.id] = linha;
+    if (!trechosOcultos.has(t.id)) linha.addTo(map);
+
+    const el = document.createElement("div");
+    el.className = "linha-camada";
+    el.innerHTML = `
+      <input type="checkbox" class="chk-trecho" title="Mostrar no mapa e na prancha">
+      <span class="nome" style="font-size:12px">Id ${t.id} — ${esc(t.nome)}</span>
+      <button title="Esconde os outros trechos e deixa só este visível" style="font-size:11px; white-space:nowrap"
+        onclick="isolarTrecho(${t.id})">🎯 Só este</button>`;
+    const cb = el.querySelector(".chk-trecho");
+    cb.checked = !trechosOcultos.has(t.id);
+    cb.addEventListener("change", () => {
+      if (cb.checked){ trechosOcultos.delete(t.id); linha.addTo(map); }
+      else { trechosOcultos.add(t.id); map.removeLayer(linha); }
+      atualizarCabecalho();
+      salvarTrechosOcultos();
+    });
+    el.querySelector(".nome").addEventListener("click", () => {
+      if (!cb.checked){ cb.checked = true; cb.dispatchEvent(new Event("change")); }
+      map.fitBounds(linha.getBounds(), {padding:[40, 40]});
+      linha.openPopup(linha.getBounds().getCenter());
+    });
+    linhasBusca.push({linha: el, chave: norm(`${t.id} ${t.nome} ${t.rodovia} ${t.situacao}`)});
+    corpo.appendChild(el);
+  });
+  atualizarCabecalho();
+  det.appendChild(corpo);
+  // entra logo depois de "Cidades" (1º grupo da lista) — pedido específico da usuária
+  const cidadesDet = [...raizFixos.children].find(el => el.querySelector?.("summary")?.textContent.includes("Cidades"));
+  if (cidadesDet) cidadesDet.after(det);
+  else raizFixos.prepend(det);
 }
 
 /* ================= Pontos fixos ================= */
@@ -2923,7 +3041,7 @@ async function gerarPrancha(){
 
 /* ================= Inicialização ================= */
 renderizarRotasArquivo();
-renderizarTodosFixos();
+renderizarTodosFixos(); // já chama renderizarTrechos() no final
 carregarDesenhos();
 
 /* overlay de carregamento: some quando o mapa fica pronto (com rede de segurança) */
