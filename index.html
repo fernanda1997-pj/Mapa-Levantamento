@@ -214,10 +214,13 @@
             <button class="btn secundario" onclick="excluirTodosDesenhos()">🗑️ Excluir tudo</button>
           </div>
           <button class="btn secundario" style="margin-top:6px"
+            onclick="adicionarPontoPorCoordenada()">📍 Adicionar ponto por coordenada</button>
+          <button class="btn secundario" style="margin-top:6px"
             onclick="document.getElementById('arquivo-importar').click()">📂 Abrir levantamento salvo</button>
           <p class="dica"><b>Desenhar:</b> o <svg width="14" height="14" viewBox="0 0 40 40" style="display:inline-block; vertical-align:-2px"><rect x="2" y="2" width="36" height="36" rx="9" fill="#BFE6C4" stroke="#7CB894" stroke-width="1"/><path d="M13 30 C13 22, 27 20, 27 11" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/><path d="M13 30 C13 22, 27 20, 27 11" fill="none" stroke="#94A3B8" stroke-width="1.6" stroke-linecap="round"/><path d="M27 5.5c-3 0-5.5 2.5-5.5 5.5 0 4.1 5.5 10 5.5 10s5.5-5.9 5.5-10c0-3-2.5-5.5-5.5-5.5z" fill="#1E3A72"/><circle cx="27" cy="11" r="2" fill="#fff"/><path d="M13 19.5c-3 0-5.5 2.5-5.5 5.5 0 4.1 5.5 10 5.5 10s5.5-5.9 5.5-10c0-3-2.5-5.5-5.5-5.5z" fill="#DC2626"/><circle cx="13" cy="25" r="2" fill="#fff"/></svg> traça a rota pela estrada com 2 cliques
             (pontos fixos valem como origem/destino); a barra do canto também tem ponto,
-            rota manual e área.<br>
+            rota manual e área — ou use <b>Adicionar ponto por coordenada</b> pra criar um
+            ponto digitando a latitude/longitude, sem precisar clicar no mapa.<br>
             <b>Guardar:</b> Salvar (KML) baixa tudo num arquivo para a sua pasta;
             depois é só Abrir (KML, KMZ ou GeoJSON) para continuar de onde parou.</p>
         </div>
@@ -1779,7 +1782,7 @@ function popupDesenho(layer){
       ${ehRota ? `<button title="Marcar um trecho no mapa como asfalto ou chão" onclick="iniciarMarcacaoPavimento('${layer._idRTA}')">📍 Marcar trecho</button>` : ""}
       ${ehRota ? `<button title="Cortar em duas rotas separadas" onclick="iniciarCorteRota('${layer._idRTA}')">✂️ Cortar rota</button>` : ""}
       ${layer._waypointsRTA?.length ? `<button title="Reabrir para alterar" onclick="reabrirRota('${layer._idRTA}')">🔁 Alterar rota</button>` : ""}
-      <button title="Baixar GeoJSON" onclick="baixarDesenho('${layer._idRTA}')">⬇️ Baixar</button>
+      <button title="Baixar este elemento em KML" onclick="baixarDesenho('${layer._idRTA}')">⬇️ Baixar KML</button>
       <button onclick="renomearDesenho('${layer._idRTA}')">✏️ Renomear</button>
       <button onclick="excluirDesenho('${layer._idRTA}')">🗑️ Excluir</button>
     </div>`;
@@ -1883,7 +1886,7 @@ function renderizarListaDesenhos(){
       <span class="nome">${esc(l._nomeRTA || "(sem nome)")}${medida ? ` <small style="color:#64748B">· ${medida}${l._medidaManualRTA ? " (manual)" : ""}</small>` : ""}</span>
       ${l._waypointsRTA?.length ? `<button title="Alterar o caminho da rota" onclick="reabrirRota('${l._idRTA}')">🔁</button>` : ""}
       ${tipo === "Rota" ? `<button title="Cortar em duas rotas separadas" onclick="iniciarCorteRota('${l._idRTA}')">✂️</button>` : ""}
-      <button title="Baixar GeoJSON" onclick="baixarDesenho('${l._idRTA}')">⬇️</button>
+      <button title="Baixar este elemento em KML" onclick="baixarDesenho('${l._idRTA}')">⬇️</button>
       <button title="Renomear/cor" onclick="renomearDesenho('${l._idRTA}')">✏️</button>
       <button title="Excluir" onclick="excluirDesenho('${l._idRTA}')">🗑️</button>`;
     const chk = linha.querySelector(".chk-desenho");
@@ -2088,6 +2091,27 @@ function excluirDesenho(id){
   });
 }
 
+/* cria um ponto do levantamento digitando a coordenada direto, sem precisar
+   clicar no mapa (o clique normal já deixa editar a coordenada depois, mas
+   ela quer poder digitar sem nem precisar clicar) */
+function adicionarPontoPorCoordenada(){
+  const sugestao = "Ponto " + (Object.keys(camadasDesenho).length + 1);
+  dialogoNomeDesenho("Nome, cor, ícone e coordenada (Ponto)", sugestao,
+    {cor: CORES_DESENHO[Object.keys(camadasDesenho).length % CORES_DESENHO.length], comIcone: true,
+     comCoords: true}, (nome, dados) => {
+    if (isNaN(dados.lat) || isNaN(dados.lng)){
+      aviso("Digite latitude e longitude válidas — nenhum ponto foi criado.");
+      return;
+    }
+    const layer = L.marker([dados.lat, dados.lng]);
+    layer._corRTA = dados.cor;
+    layer._iconeRTA = dados.icone || undefined;
+    registrarDesenho(layer, nome || sugestao);
+    salvarDesenhos();
+    map.setView([dados.lat, dados.lng], Math.max(map.getZoom(), 14));
+    layer.openPopup();
+  });
+}
 map.on("pm:create", ev => {
   const layer = ev.layer;
   const {tipo, medida} = infoGeom(layer);
