@@ -1566,6 +1566,177 @@ function encerrarMarcacaoPavimento(){
   marcacaoPav = null;
 }
 
+/* ===== cortar rota: clica num ponto no meio e vira duas rotas separadas ===== */
+let corteRota = null; // {id} enquanto o modo de corte está ativo
+let bannerCorte = null;
+function iniciarCorteRota(id){
+  const l = camadasDesenho[id];
+  if (!l || !(l instanceof L.Polyline) || l instanceof L.Polygon) return;
+  const lls = l.getLatLngs();
+  const pontos = Array.isArray(lls[0]) ? lls.flat() : lls;
+  if (pontos.length < 3){
+    aviso("Essa rota não tem pontos no meio pra cortar.");
+    return;
+  }
+  map.closePopup();
+  l.unbindPopup(); // evita abrir o balão enquanto ela clica pra cortar
+  corteRota = {id};
+  l.on("click", cliqueCorteRota);
+  map.getContainer().style.cursor = "crosshair";
+  bannerCorte = L.control({position:"topright"});
+  bannerCorte.onAdd = () => {
+    const d = L.DomUtil.create("div");
+    d.style.cssText = "background:#1E3A72;color:#fff;padding:9px 12px;border-radius:8px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.4);max-width:240px;line-height:1.45";
+    d.innerHTML = `<b>✂️ Cortar rota</b><br>Clique num ponto no <b>meio</b> da rota pra separar em duas.
+      <div style="display:flex; gap:5px; margin-top:6px">
+        <button id="corte-cancelar" style="flex:1; padding:5px 7px; border-radius:5px; cursor:pointer; border:1px solid #fff; background:transparent; color:#fff">✖ Cancelar</button>
+      </div>`;
+    L.DomEvent.disableClickPropagation(d);
+    L.DomEvent.on(d.querySelector("#corte-cancelar"), "click", ev => { L.DomEvent.stop(ev); encerrarCorteRota(); });
+    return d;
+  };
+  bannerCorte.addTo(map);
+  aviso("Clique num ponto no meio da rota pra cortar ali.");
+}
+function cliqueCorteRota(ev){
+  L.DomEvent.stop(ev);
+  if (!corteRota) return;
+  const l = camadasDesenho[corteRota.id];
+  if (!l){ encerrarCorteRota(); return; }
+  const lls = l.getLatLngs();
+  const pontos = Array.isArray(lls[0]) ? lls.flat() : lls;
+  const idx = nearestVertexIdx(pontos, ev.latlng);
+  if (idx === 0 || idx === pontos.length - 1){
+    aviso("Clique num ponto no MEIO da rota, não bem na ponta.");
+    return;
+  }
+  executarCorteRota(corteRota.id, idx);
+}
+function encerrarCorteRota(){
+  if (!corteRota) return;
+  const l = camadasDesenho[corteRota.id];
+  if (l){ l.off("click", cliqueCorteRota); l.bindPopup(() => popupDesenho(l)); }
+  if (bannerCorte){ map.removeControl(bannerCorte); bannerCorte = null; }
+  map.getContainer().style.cursor = "";
+  corteRota = null;
+}
+/* separa os trechos de pavimento manual (chão/asfalto) marcados na rota entre os dois
+   pedaços, cortando também quem atravessa o ponto de corte */
+function dividirPavSegs(pavSegs, pontos, idx){
+  if (!pavSegs || !pavSegs.length) return {a: null, b: null};
+  const cutPt = pontos[idx];
+  const a = [], b = [];
+  pavSegs.forEach(seg => {
+    const segLL = seg.coords.map(c => L.latLng(c[0], c[1]));
+    const iStart = nearestVertexIdx(pontos, segLL[0]);
+    const iEnd = nearestVertexIdx(pontos, segLL[segLL.length - 1]);
+    if (Math.max(iStart, iEnd) <= idx){ a.push(seg); return; }
+    if (Math.min(iStart, iEnd) >= idx){ b.push(seg); return; }
+    // atravessa o corte: acha o ponto do próprio trecho mais perto do corte e separa ali
+    const corteLocal = nearestVertexIdx(segLL, cutPt);
+    if (corteLocal > 0){
+      a.push({tipo: seg.tipo, coords: segLL.slice(0, corteLocal + 1).map(p => [+p.lat.toFixed(6), +p.lng.toFixed(6)])});
+    }
+    if (corteLocal < segLL.length - 1){
+      b.push({tipo: seg.tipo, coords: segLL.slice(corteLocal).map(p => [+p.lat.toFixed(6), +p.lng.toFixed(6)])});
+    }
+  });
+  return {a: a.length ? a : null, b: b.length ? b : null};
+}
+/* monta um dos dois pedaços da rota cortada, já registrado no levantamento */
+function criarPedacoRota(pontos, nome, cor, extras){
+  const layer = L.polyline(pontos);
+  if (cor) layer._corRTA = cor;
+  layer._waypointsRTA = extras.waypoints;
+  layer._legsRTA = extras.legs;
+  const temManual = extras.segManual && extras.segManual.some(Boolean);
+  layer._segmentosManualRTA = temManual ? extras.segManual : null;
+  layer._segmentosPavimentoRTA = temManual ? extras.segPav : null;
+  registrarDesenho(layer, nome);
+  if (extras.pavSegs && extras.pavSegs.length){
+    layer._pavSegsManualRTA = extras.pavSegs;
+    recomputarPavManual(layer);
+    renderizarChao(layer);
+  } else {
+    analisarPavimento(layer).catch(() => {}); // asfalto x chão, preenchido em segundo plano
+  }
+  layer._limitesChaoRTA = extras.limitesChao && extras.limitesChao.length ? extras.limitesChao : null;
+  return layer;
+}
+/* corta a rota no vértice idx e transforma em duas rotas independentes */
+function executarCorteRota(id, idx){
+  const l = camadasDesenho[id];
+  if (!l) { encerrarCorteRota(); return; }
+  const lls = l.getLatLngs();
+  const pontos = Array.isArray(lls[0]) ? lls.flat() : lls;
+  const cutPt = pontos[idx];
+  const pontosA = pontos.slice(0, idx + 1);
+  const pontosB = pontos.slice(idx);
+
+  // se a rota guarda os pontos originais clicados (feita com o 🛣️), acha em qual trecho
+  // entre eles o corte caiu, pra dividir waypoints/pernas/manual-chão certinho; senão os
+  // pedaços saem "soltos" (sem histórico pra reabrir depois), igual uma linha na mão
+  let waypointsA = null, waypointsB = null, legsA = null, legsB = null,
+      segManualA = null, segManualB = null, segPavA = null, segPavB = null;
+  const wps = l._waypointsRTA, legs = l._legsRTA;
+  if (wps && wps.length >= 2 && legs && legs.length === wps.length - 1){
+    const cumAcc = [0];
+    for (let i = 1; i < pontos.length; i++) cumAcc.push(cumAcc[i - 1] + map.distance(pontos[i - 1], pontos[i]));
+    const cutDist = cumAcc[idx];
+    const legBounds = [0];
+    legs.forEach(d => legBounds.push(legBounds[legBounds.length - 1] + d));
+    let k = 0;
+    while (k < legs.length - 1 && legBounds[k + 1] <= cutDist) k++;
+    const wpsLL = wps.map(([lat, lng]) => L.latLng(lat, lng));
+    const segsMan = l._segmentosManualRTA || wps.slice(1).map(() => false);
+    const segsPav = l._segmentosPavimentoRTA || wps.slice(1).map(() => null);
+    waypointsA = [...wpsLL.slice(0, k + 1), cutPt].map(p => [+p.lat.toFixed(6), +p.lng.toFixed(6)]);
+    waypointsB = [cutPt, ...wpsLL.slice(k + 1)].map(p => [+p.lat.toFixed(6), +p.lng.toFixed(6)]);
+    // a perna cortada (k) usa a distância pela geometria (cumAcc), não linha reta até o
+    // waypoint — senão uma perna "pela estrada" cortada no meio de uma curva sairia com
+    // km errado (linha reta é bem mais curta que o asfalto de verdade)
+    legsA = [...legs.slice(0, k), cutDist - legBounds[k]];
+    legsB = [legBounds[k + 1] - cutDist, ...legs.slice(k + 1)];
+    segManualA = segsMan.slice(0, k + 1);
+    segManualB = segsMan.slice(k);
+    segPavA = segsPav.slice(0, k + 1);
+    segPavB = segsPav.slice(k);
+  }
+
+  const {a: pavSegsA, b: pavSegsB} = dividirPavSegs(l._pavSegsManualRTA, pontos, idx);
+
+  // cada ponto 🚧 de início/fim de chão fica com o pedaço mais perto dele
+  const limitesA = [], limitesB = [];
+  (l._limitesChaoRTA || []).forEach(mid => {
+    const mk = camadasDesenho[mid];
+    if (!mk) return;
+    const mIdx = nearestVertexIdx(pontos, mk.getLatLng());
+    (mIdx <= idx ? limitesA : limitesB).push(mid);
+  });
+
+  const nomeBase = l._nomeRTA || "Rota";
+  const corA = l._corRTA;
+
+  const layerA = criarPedacoRota(pontosA, `${nomeBase} (1)`, corA, {
+    waypoints: waypointsA, legs: legsA, segManual: segManualA, segPav: segPavA,
+    pavSegs: pavSegsA, limitesChao: limitesA,
+  });
+  const layerB = criarPedacoRota(pontosB, `${nomeBase} (2)`, null, { // cor nova, pra diferenciar
+    waypoints: waypointsB, legs: legsB, segManual: segManualB, segPav: segPavB,
+    pavSegs: pavSegsB, limitesChao: limitesB,
+  });
+
+  // remove só a rota original — os pontos 🚧 já foram realocados pros pedaços novos
+  grupoDesenhos.removeLayer(l);
+  delete camadasDesenho[id];
+  removerChao(id);
+  if (ocultosDesenho.delete(id)) salvarOcultosDesenho();
+
+  salvarDesenhos();
+  encerrarCorteRota();
+  aviso(`Rota cortada em duas: "${layerA._nomeRTA}" e "${layerB._nomeRTA}" — dá pra renomear cada uma com o ✏️.`);
+}
+
 /* achata getLatLngs() (rota simples ou com múltiplas pernas) em [[lat,lng],...],
    no mesmo formato que _pavSegsManualRTA usa (igual ao clique-em-2-pontos) */
 function latlngsPlanos(layer){
@@ -1606,6 +1777,7 @@ function popupDesenho(layer){
     <div class="pop-acoes">
       ${ehLinha && !layer._pavRTA ? `<button onclick="analisarPavimentoDesenho('${layer._idRTA}')">🛞 Pavimento</button>` : ""}
       ${ehRota ? `<button title="Marcar um trecho no mapa como asfalto ou chão" onclick="iniciarMarcacaoPavimento('${layer._idRTA}')">📍 Marcar trecho</button>` : ""}
+      ${ehRota ? `<button title="Cortar em duas rotas separadas" onclick="iniciarCorteRota('${layer._idRTA}')">✂️ Cortar rota</button>` : ""}
       ${layer._waypointsRTA?.length ? `<button title="Reabrir para alterar" onclick="reabrirRota('${layer._idRTA}')">🔁 Alterar rota</button>` : ""}
       <button title="Baixar GeoJSON" onclick="baixarDesenho('${layer._idRTA}')">⬇️ Baixar</button>
       <button onclick="renomearDesenho('${layer._idRTA}')">✏️ Renomear</button>
@@ -1710,6 +1882,7 @@ function renderizarListaDesenhos(){
       <span style="font-size:13px">${ic}</span>
       <span class="nome">${esc(l._nomeRTA || "(sem nome)")}${medida ? ` <small style="color:#64748B">· ${medida}${l._medidaManualRTA ? " (manual)" : ""}</small>` : ""}</span>
       ${l._waypointsRTA?.length ? `<button title="Alterar o caminho da rota" onclick="reabrirRota('${l._idRTA}')">🔁</button>` : ""}
+      ${tipo === "Rota" ? `<button title="Cortar em duas rotas separadas" onclick="iniciarCorteRota('${l._idRTA}')">✂️</button>` : ""}
       <button title="Baixar GeoJSON" onclick="baixarDesenho('${l._idRTA}')">⬇️</button>
       <button title="Renomear/cor" onclick="renomearDesenho('${l._idRTA}')">✏️</button>
       <button title="Excluir" onclick="excluirDesenho('${l._idRTA}')">🗑️</button>`;
