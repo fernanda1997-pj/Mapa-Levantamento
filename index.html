@@ -285,10 +285,31 @@
       KM digitado à mão no cadastro do ponto tem prioridade.<br>
       O botão acima ajusta o zoom pra caber tudo que você desenhou — depois é só ajustar
       manualmente o enquadramento e os pontos fixos visíveis do jeito que quiser antes de gerar.
-      Dica: ative o fundo <b>Satélite</b> antes de gerar.</p>
+      Dica: ative o fundo <b>Satélite</b> antes de gerar.<br>
+      Ao clicar em <b>Pré-visualizar</b>, você vê a prancha inteira (com título e legenda) antes
+      de baixar — se o enquadramento não ficou bom, dá pra voltar e ajustar o mapa quantas vezes
+      precisar, sem baixar nada até você confirmar.</p>
     <div class="acoes">
       <button class="btn secundario" onclick="document.getElementById('modal-prancha').classList.remove('aberto')">Cancelar</button>
-      <button class="btn" id="pr-gerar" onclick="gerarPrancha()">Gerar PNG</button>
+      <button class="btn" id="pr-gerar" onclick="gerarPrancha()">👁️ Pré-visualizar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal preview da prancha (confirma antes de baixar) -->
+<div class="modal-fundo" id="modal-prancha-preview">
+  <div class="modal" style="max-width:min(94vw, 1100px)">
+    <h2>Confira antes de baixar</h2>
+    <div style="max-height:70vh; overflow:auto; border:1px solid var(--borda); border-radius:8px; background:#f1f5f9">
+      <img id="pr-preview-img" style="width:100%; display:block">
+    </div>
+    <p class="dica" style="margin-top:10px">Se o enquadramento não ficou do jeito que você quer,
+      clique em <b>Ajustar enquadramento</b> pra voltar, mover/dar zoom no mapa e pré-visualizar
+      de novo — o título, subtítulo e memória de cálculo continuam preenchidos.</p>
+    <div class="acoes">
+      <button class="btn secundario" onclick="fecharPreviewPrancha()">✖ Cancelar</button>
+      <button class="btn secundario" onclick="ajustarEnquadramentoPrancha()">🔲 Ajustar enquadramento</button>
+      <button class="btn" onclick="confirmarDownloadPrancha()">⬇️ Baixar PNG</button>
     </div>
   </div>
 </div>
@@ -3226,14 +3247,38 @@ async function gerarPrancha(){
     salvar("rta_geoportal_memoria", memoria);
     const page = montarPrancha(mapCv, titulo, sub, logos, coordsProntas, memoria);
     const nomeArq = (sub || titulo).replace(/[^\w\- À-ÿ]+/g, "").trim().replace(/\s+/g, "_") || "prancha";
-    const a = document.createElement("a");
-    a.download = nomeArq + ".png";
-    a.href = page.toDataURL("image/png");
-    a.click();
+    mostrarPreviewPrancha(page, nomeArq + ".png");
   } catch (e) {
     aviso("Não foi possível gerar a prancha: " + (e.message || e));
   }
-  bt.disabled = false; bt.textContent = "Gerar PNG";
+  bt.disabled = false; bt.textContent = "👁️ Pré-visualizar";
+}
+/* prévia da prancha pronta (canvas + nome do arquivo), esperando ela confirmar o download */
+let pranchaPronta = null;
+function mostrarPreviewPrancha(canvas, nomeArq){
+  pranchaPronta = {canvas, nomeArq};
+  document.getElementById("pr-preview-img").src = canvas.toDataURL("image/png");
+  document.getElementById("modal-prancha-preview").classList.add("aberto");
+}
+function fecharPreviewPrancha(){
+  document.getElementById("modal-prancha-preview").classList.remove("aberto");
+  pranchaPronta = null;
+}
+/* volta pra caixa de título/legenda pra ela mover/dar zoom no mapa e pré-visualizar de novo
+   (título, subtítulo e memória continuam preenchidos, só o mapa é que ela reajusta) */
+function ajustarEnquadramentoPrancha(){
+  document.getElementById("modal-prancha-preview").classList.remove("aberto");
+  pranchaPronta = null;
+  abrirModalPrancha();
+}
+function confirmarDownloadPrancha(){
+  if (!pranchaPronta) return;
+  const a = document.createElement("a");
+  a.download = pranchaPronta.nomeArq;
+  a.href = pranchaPronta.canvas.toDataURL("image/png");
+  a.click();
+  document.getElementById("modal-prancha-preview").classList.remove("aberto");
+  pranchaPronta = null;
 }
 
 /* ================= Inicialização ================= */
