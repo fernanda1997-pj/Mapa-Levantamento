@@ -435,13 +435,16 @@ proj4.defs("UTM22S", "+proj=utm +zone=22 +south +ellps=GRS80 +towgs84=0,0,0 +uni
 proj4.defs("UTM23S", "+proj=utm +zone=23 +south +ellps=GRS80 +towgs84=0,0,0 +units=m +no_defs");
 
 /* ================= Mapa base ================= */
+/* crossOrigin: os 3 provedores mandam Access-Control-Allow-Origin: * — carregando os
+   tiles em modo CORS, a captura da prancha (html-to-image) não "mancha" o canvas
+   (senão dá "Tainted canvases may not be exported" na hora de gerar/baixar) */
 const bases = {
   osm: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-      {maxZoom:19, attribution:"© OpenStreetMap"}),
+      {maxZoom:19, attribution:"© OpenStreetMap", crossOrigin:true}),
   sat: L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      {maxZoom:19, attribution:"© Esri"}),
+      {maxZoom:19, attribution:"© Esri", crossOrigin:true}),
   escuro: L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-      {maxZoom:19, attribution:"© CARTO"}),
+      {maxZoom:19, attribution:"© CARTO", crossOrigin:true}),
 };
 const map = L.map("map", {zoomControl:true, layers:[bases.osm]});
 /* Geoman em modo opt-in: só os desenhos do levantamento são editáveis —
