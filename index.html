@@ -226,13 +226,33 @@
         </div>
       </details>
 
-      <details class="secao">
+      <details class="secao" id="secao-prancha">
         <summary>🖼️ Prancha (mapa de localização)</summary>
-        <div class="corpo">
-          <button class="btn" onclick="abrirModalPrancha()">🖼️ Gerar prancha (PNG)</button>
-          <p class="dica">Imagem pronta da vista atual: título, legenda automática,
-            coordenadas com KM, memória de cálculo, escala e norte.
-            Ative o fundo <b>Satélite</b> e enquadre a área antes de gerar.</p>
+        <div class="corpo modal" style="box-shadow:none; padding:0; max-width:none; max-height:none; overflow:visible">
+          <label>Título</label>
+          <input type="text" id="pr-titulo" maxlength="80" value="MAPA DE LOCALIZAÇÃO" oninput="atualizarGuiaPrancha()">
+          <label>Subtítulo (rodovia / trecho)</label>
+          <input type="text" id="pr-sub" maxlength="80" placeholder="Ex.: TO - 280" oninput="atualizarGuiaPrancha()">
+          <label>Calcular KM pela estrada a partir de</label>
+          <select id="pr-ref"></select>
+          <label>Memória de cálculo (opcional — sai num quadro ao lado das coordenadas)</label>
+          <textarea id="pr-memoria" style="min-height:70px"
+            placeholder="Ex.: DMT areal-canteiro: 12,26 km&#10;Média das distâncias: ...&#10;Observações..."></textarea>
+          <label>Inserir média de</label>
+          <div style="display:flex; gap:6px">
+            <select id="pr-rota" style="flex:1; padding:7px 9px; border:1px solid var(--borda); border-radius:6px; font-size:13px"></select>
+            <button class="btn secundario" style="width:auto; padding:8px 14px" onclick="inserirMediaKm()">➕ Inserir</button>
+          </div>
+          <div style="margin-top:10px">
+            <button type="button" class="btn secundario" style="width:auto; padding:8px 14px" onclick="enquadrarPrancha()">🔲 Enquadrar rotas e pontos desenhados</button>
+          </div>
+          <p class="dica" style="margin-top:10px">Mexa e dê zoom no mapa à vontade — o título e a
+            legenda aparecem por cima dele (guia ao lado dos botões de zoom), do jeito que vão
+            sair na imagem, pra você enquadrar certinho antes de gerar. Os KM do bloco
+            COORDENADAS são calculados automaticamente pela estrada, do ponto de referência até
+            cada ponto (KM digitado à mão no cadastro do ponto tem prioridade).
+            Dica: ative o fundo <b>Satélite</b> antes de gerar.</p>
+          <button class="btn" id="pr-gerar" style="margin-top:8px" onclick="gerarPrancha()">👁️ Pré-visualizar</button>
         </div>
       </details>
 
@@ -257,43 +277,6 @@
   <button id="abrir-painel" onclick="document.getElementById('painel').classList.toggle('aberto')">☰</button>
   <div id="map"></div>
   <div id="coords"></div>
-</div>
-
-<!-- Modal prancha -->
-<div class="modal-fundo" id="modal-prancha">
-  <div class="modal">
-    <h2>Gerar prancha — mapa de localização</h2>
-    <label>Título</label>
-    <input type="text" id="pr-titulo" maxlength="80" value="MAPA DE LOCALIZAÇÃO">
-    <label>Subtítulo (rodovia / trecho)</label>
-    <input type="text" id="pr-sub" maxlength="80" placeholder="Ex.: TO - 280">
-    <label>Calcular KM pela estrada a partir de</label>
-    <select id="pr-ref"></select>
-    <label>Memória de cálculo (opcional — sai num quadro ao lado das coordenadas)</label>
-    <textarea id="pr-memoria" style="min-height:84px"
-      placeholder="Ex.: DMT areal-canteiro: 12,26 km&#10;Média das distâncias: ...&#10;Observações..."></textarea>
-    <label>Inserir média de</label>
-    <div style="display:flex; gap:6px">
-      <select id="pr-rota" style="flex:1; padding:7px 9px; border:1px solid var(--borda); border-radius:6px; font-size:13px"></select>
-      <button class="btn secundario" style="width:auto; padding:8px 14px" onclick="inserirMediaKm()">➕ Inserir</button>
-    </div>
-    <div style="margin-top:10px">
-      <button type="button" class="btn secundario" style="width:auto; padding:8px 14px" onclick="enquadrarPrancha()">🔲 Enquadrar rotas e pontos desenhados</button>
-    </div>
-    <p class="dica" style="margin-top:10px">Os KM do bloco COORDENADAS são calculados
-      automaticamente pela estrada, do ponto de referência (normalmente o canteiro) até cada ponto.
-      KM digitado à mão no cadastro do ponto tem prioridade.<br>
-      O botão acima ajusta o zoom pra caber tudo que você desenhou — depois é só ajustar
-      manualmente o enquadramento e os pontos fixos visíveis do jeito que quiser antes de gerar.
-      Dica: ative o fundo <b>Satélite</b> antes de gerar.<br>
-      Ao clicar em <b>Pré-visualizar</b>, você vê a prancha inteira (com título e legenda) antes
-      de baixar — se o enquadramento não ficou bom, dá pra voltar e ajustar o mapa quantas vezes
-      precisar, sem baixar nada até você confirmar.</p>
-    <div class="acoes">
-      <button class="btn secundario" onclick="document.getElementById('modal-prancha').classList.remove('aberto')">Cancelar</button>
-      <button class="btn" id="pr-gerar" onclick="gerarPrancha()">👁️ Pré-visualizar</button>
-    </div>
-  </div>
 </div>
 
 <!-- Modal preview da prancha (confirma antes de baixar) -->
@@ -2758,8 +2741,79 @@ function carregarScriptExt(src, glob){
     document.head.appendChild(s);
   });
 }
-function abrirModalPrancha(){
-  document.getElementById("painel").classList.remove("aberto");
+/* ---- guia de enquadramento: título e legenda por cima do mapa DE VERDADE, ao vivo,
+   pra ela poder mexer/dar zoom vendo exatamente onde eles vão ficar na imagem final
+   (as guias somem sozinhas na hora de capturar — ver fecharGuiaPrancha em gerarPrancha) ---- */
+let guiaPranchaAtiva = false;
+function criarGuiasPrancha(){
+  if (document.getElementById("guia-titulo")) return;
+  const estiloCaixa = "position:absolute; z-index:900; background:rgba(255,255,255,.94); "
+    + "border:1.5px solid #0f172a; border-radius:5px; padding:10px 14px; pointer-events:none; display:none";
+  const gt = document.createElement("div");
+  gt.id = "guia-titulo";
+  gt.style.cssText = estiloCaixa + "; top:14px; left:60px; max-width:60%; text-align:center";
+  gt.innerHTML = `<div id="guia-titulo-txt" style="font-weight:bold; font-size:18px; color:#0f172a; white-space:nowrap"></div>
+    <div id="guia-sub-txt" style="font-size:13px; color:#334155; margin-top:3px; white-space:nowrap"></div>`;
+  const gl = document.createElement("div");
+  gl.id = "guia-legenda";
+  gl.style.cssText = estiloCaixa + "; top:14px; right:14px; max-width:38%";
+  gl.innerHTML = `<div style="font-weight:bold; font-size:14px; color:#0f172a; border-bottom:1px solid #cbd5e1; padding-bottom:6px; margin-bottom:6px; white-space:nowrap">Legenda</div>
+    <div id="guia-legenda-itens" style="font-size:12px; color:#1e293b; display:flex; flex-direction:column; gap:5px"></div>`;
+  map.getContainer().appendChild(gt);
+  map.getContainer().appendChild(gl);
+}
+function atualizarGuiaPrancha(){
+  if (!guiaPranchaAtiva) return;
+  const titulo = document.getElementById("pr-titulo").value.trim() || "MAPA DE LOCALIZAÇÃO";
+  const sub = document.getElementById("pr-sub").value.trim();
+  document.getElementById("guia-titulo-txt").textContent = titulo;
+  const gs = document.getElementById("guia-sub-txt");
+  gs.textContent = sub; gs.style.display = sub ? "" : "none";
+  const cont = document.getElementById("guia-legenda-itens");
+  cont.innerHTML = "";
+  const itens = itensLegendaPrancha().slice(0, 18);
+  if (!itens.length){
+    cont.innerHTML = `<div style="color:#94a3b8; font-style:italic">(nada visível na área)</div>`;
+    return;
+  }
+  itens.forEach(it => {
+    const linha = document.createElement("div");
+    linha.style.cssText = "display:flex; align-items:center; gap:8px; white-space:nowrap";
+    if (it.tipo === "sub"){
+      linha.innerHTML = `<span style="width:16px; flex:none"></span><span style="font-style:italic; color:${it.cor || "#64748B"}">${esc(it.rot)}</span>`;
+    } else {
+      const simb = it.tipo === "linha"
+        ? `<span style="width:16px; height:3px; background:${it.cor}; display:inline-block; flex:none"></span>`
+        : it.tipo === "tracejada"
+        ? `<span style="width:16px; height:0; border-top:3px dashed ${it.cor}; display:inline-block; flex:none"></span>`
+        : `<span style="width:10px; height:10px; border-radius:50%; background:${it.cor}; box-shadow:0 0 0 1.5px #fff, 0 0 0 2.5px ${it.cor}; display:inline-block; flex:none"></span>`;
+      linha.innerHTML = `${simb}<span>${esc(it.rot)}</span>`;
+    }
+    cont.appendChild(linha);
+  });
+}
+function abrirGuiaPrancha(){
+  criarGuiasPrancha();
+  guiaPranchaAtiva = true;
+  document.getElementById("guia-titulo").style.display = "block";
+  document.getElementById("guia-legenda").style.display = "block";
+  map.on("moveend zoomend", atualizarGuiaPrancha);
+  atualizarGuiaPrancha();
+}
+function fecharGuiaPrancha(){
+  guiaPranchaAtiva = false;
+  map.off("moveend zoomend", atualizarGuiaPrancha);
+  const gt = document.getElementById("guia-titulo"), gl = document.getElementById("guia-legenda");
+  if (gt) gt.style.display = "none";
+  if (gl) gl.style.display = "none";
+}
+document.getElementById("secao-prancha").addEventListener("toggle", function(){
+  if (this.open){ popularCamposPrancha(); abrirGuiaPrancha(); }
+  else fecharGuiaPrancha();
+});
+/* preenche os selects (referência pro KM, rota pra média) e recupera a memória salva —
+   roda toda vez que a seção da prancha é aberta, pra refletir o que tem no levantamento agora */
+function popularCamposPrancha(){
   const sel = document.getElementById("pr-ref");
   sel.innerHTML = `<option value="">(não calcular)</option>`;
   listaCoordenadasPrancha(Infinity).forEach(p => {
@@ -2784,8 +2838,10 @@ function abrirModalPrancha(){
   oTodos.textContent = "Todos os pontos (média dos KM)";
   selRota.appendChild(oTodos);
   if (selRota.options.length) selRota.selectedIndex = 0;
-  document.getElementById("pr-memoria").value = carregar("rta_geoportal_memoria", "");
-  document.getElementById("modal-prancha").classList.add("aberto");
+  // só recupera a memória salva se o campo ainda tá vazio (não sobrescreve o que ela já
+  // digitou nesta visita, caso feche/abra a seção sem ter clicado em Pré-visualizar)
+  const memCampo = document.getElementById("pr-memoria");
+  if (!memCampo.value.trim()) memCampo.value = carregar("rta_geoportal_memoria", "");
 }
 const fmtKmBr = m => (m / 1000).toLocaleString("pt-BR", {maximumFractionDigits:2}) + " km";
 async function inserirMediaKm(){
@@ -3184,10 +3240,9 @@ function limitesLevantamento(){
 function enquadrarPrancha(){
   const limites = limitesLevantamento();
   if (!limites){ aviso("Nada desenhado ainda para enquadrar."); return; }
-  document.getElementById("modal-prancha").classList.remove("aberto");
   map.fitBounds(limites, {padding:[60, 60], maxZoom:16, animate:false});
-  aviso("Mapa enquadrado nas rotas e pontos desenhados. Ajuste o zoom/posição e os "
-      + "pontos fixos visíveis como quiser, e abra 🖼️ Gerar prancha de novo para continuar.");
+  aviso("Mapa enquadrado nas rotas e pontos desenhados — ajuste o zoom/posição e os pontos "
+      + "fixos visíveis do jeito que quiser (o título e a legenda já mostram como vai ficar).");
 }
 /* afasta rótulos que ficariam sobrepostos na prancha (empurra para baixo até não colidir mais) */
 function evitarSobreposicaoRotulos(){
@@ -3226,8 +3281,9 @@ async function gerarPrancha(){
       im.src = src;
     });
     const logos = await Promise.all([carregarImg("logo/LOGO RTA.png"), carregarImg("logo/LOGO MSI.jpeg")]);
-    document.getElementById("modal-prancha").classList.remove("aberto");
-    await new Promise(r => setTimeout(r, 120)); // deixa o modal sumir da tela
+    fecharGuiaPrancha(); // some com as guias de título/legenda antes de capturar (senão saem duplicadas)
+    document.getElementById("painel").classList.remove("aberto"); // celular: fecha a gaveta
+    await new Promise(r => setTimeout(r, 120)); // deixa as guias sumirem da tela
     const restaurarRotulos = evitarSobreposicaoRotulos();
     let mapCv;
     try {
@@ -3269,7 +3325,9 @@ function fecharPreviewPrancha(){
 function ajustarEnquadramentoPrancha(){
   document.getElementById("modal-prancha-preview").classList.remove("aberto");
   pranchaPronta = null;
-  abrirModalPrancha();
+  document.getElementById("painel").classList.add("aberto"); // celular: reabre a gaveta
+  document.getElementById("secao-prancha").open = true; // garante a seção aberta (se já tava, o toggle não dispara de novo)
+  abrirGuiaPrancha();
 }
 function confirmarDownloadPrancha(){
   if (!pranchaPronta) return;
