@@ -3288,29 +3288,49 @@ function enquadrarPrancha(){
       + "fixos visíveis do jeito que quiser (o título e a legenda já mostram como vai ficar).");
 }
 /* afasta rótulos que ficariam sobrepostos na prancha (empurra para baixo até não colidir mais) */
+/* afasta rótulos que ficariam sobrepostos na prancha — em vez de só empurrar tudo pra
+   baixo (deixava pontos próximos com uma coluna de nomes emendados), testa um leque de
+   posições ao redor do lugar original (baixo, cima, com um desvio pro lado) e usa a
+   primeira que não colide com nenhum rótulo já posicionado; só empurra bem longe se
+   mesmo assim não achar espaço (grudado de rótulos, caso raro) */
 function evitarSobreposicaoRotulos(){
   const itens = Array.from(document.querySelectorAll(".leaflet-tooltip.rotulo-halo"))
     .filter(el => el.offsetParent !== null)
-    .map(el => ({el, dy:0, rect:el.getBoundingClientRect()}))
-    .sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left);
-  const folga = 3;
+    .map(el => {
+      const r = el.getBoundingClientRect();
+      return {el, w:r.width, h:r.height, left0:r.left, top0:r.top};
+    })
+    .sort((a, b) => a.top0 - b.top0 || a.left0 - b.left0);
+  const folga = 5;
   const sobrepoe = (a, b) => a.left < b.right + folga && a.right > b.left - folga
                            && a.top < b.bottom + folga && a.bottom > b.top - folga;
   const colocados = [];
-  for (const it of itens){
-    let r = it.rect;
-    let tentativas = 0;
-    let colisao;
-    while (tentativas < 40 && (colisao = colocados.find(c => sobrepoe(r, c)))){
-      const desloc = colisao.bottom - r.top + folga;
-      it.dy += desloc;
-      r = {left:r.left, right:r.right, top:r.top + desloc, bottom:r.bottom + desloc};
-      tentativas++;
+  itens.forEach(it => {
+    const passo = it.h + folga;
+    const candidatos = [
+      {dx:0, dy:0},
+      {dx:0, dy:passo}, {dx:0, dy:-passo},
+      {dx:it.w * 0.55, dy:passo}, {dx:it.w * 0.55, dy:-passo},
+      {dx:0, dy:2 * passo}, {dx:0, dy:-2 * passo},
+      {dx:it.w * 0.55, dy:2 * passo}, {dx:it.w * 0.55, dy:-2 * passo},
+      {dx:0, dy:3 * passo}, {dx:0, dy:-3 * passo},
+      {dx:0, dy:4 * passo}, {dx:0, dy:-4 * passo},
+    ];
+    let escolhido = candidatos
+      .map(c => ({...c, r:{left:it.left0 + c.dx, right:it.left0 + c.dx + it.w, top:it.top0 + c.dy, bottom:it.top0 + c.dy + it.h}}))
+      .find(c => !colocados.some(p => sobrepoe(c.r, p)));
+    if (!escolhido){
+      // não sobrou nenhuma posição do leque (muitos rótulos bem grudados): desce até achar
+      let dy = 5 * passo, r;
+      do { r = {left:it.left0, right:it.left0 + it.w, top:it.top0 + dy, bottom:it.top0 + dy + it.h}; dy += passo; }
+      while (colocados.some(p => sobrepoe(r, p)) && dy < 20 * passo);
+      escolhido = {dx:0, dy:dy - passo, r};
     }
-    if (it.dy) it.el.style.marginTop = it.dy + "px";
-    colocados.push(r);
-  }
-  return () => itens.forEach(it => { if (it.dy) it.el.style.marginTop = ""; });
+    if (escolhido.dx) it.el.style.marginLeft = escolhido.dx + "px";
+    if (escolhido.dy) it.el.style.marginTop = escolhido.dy + "px";
+    colocados.push(escolhido.r);
+  });
+  return () => itens.forEach(it => { it.el.style.marginLeft = ""; it.el.style.marginTop = ""; });
 }
 async function gerarPrancha(){
   const bt = document.getElementById("pr-gerar");
