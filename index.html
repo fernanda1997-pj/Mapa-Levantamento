@@ -3294,18 +3294,35 @@ function enquadrarPrancha(){
    primeira que não colide com nenhum rótulo já posicionado; só empurra bem longe se
    mesmo assim não achar espaço (grudado de rótulos, caso raro) */
 function evitarSobreposicaoRotulos(){
+  // os próprios marcadores (bolinhas/ícones) também contam como obstáculo — sem isso um
+  // rótulo podia ficar livre de outros RÓTULOS mas continuar em cima do pontinho de um
+  // vizinho. Cada rótulo "conhece" o marcador mais próximo dele (o dono) pra não se achar
+  // colidido com o próprio ponto — só evita os marcadores DOS OUTROS
+  const marcadores = Array.from(document.querySelectorAll(".leaflet-marker-icon"))
+    .filter(el => el.offsetParent !== null)
+    .map(el => {
+      const r = el.getBoundingClientRect();
+      return {left:r.left, right:r.right, top:r.top, bottom:r.bottom, cx:(r.left + r.right) / 2, cy:(r.top + r.bottom) / 2};
+    });
   const itens = Array.from(document.querySelectorAll(".leaflet-tooltip.rotulo-halo"))
     .filter(el => el.offsetParent !== null)
     .map(el => {
       const r = el.getBoundingClientRect();
-      return {el, w:r.width, h:r.height, left0:r.left, top0:r.top};
+      const cy = (r.top + r.bottom) / 2;
+      let dono = null, menorDist = Infinity;
+      marcadores.forEach(mk => {
+        const d = Math.hypot(mk.cx - r.left, mk.cy - cy); // rótulo nasce coladinho no seu marcador
+        if (d < menorDist){ menorDist = d; dono = mk; }
+      });
+      return {el, w:r.width, h:r.height, left0:r.left, top0:r.top, dono};
     })
     .sort((a, b) => a.top0 - b.top0 || a.left0 - b.left0);
   const folga = 5;
   const sobrepoe = (a, b) => a.left < b.right + folga && a.right > b.left - folga
                            && a.top < b.bottom + folga && a.bottom > b.top - folga;
-  const colocados = [];
+  const colocados = [...marcadores];
   itens.forEach(it => {
+    const obstaculos = it.dono ? colocados.filter(o => o !== it.dono) : colocados;
     const passo = it.h + folga;
     const candidatos = [
       {dx:0, dy:0},
@@ -3318,12 +3335,12 @@ function evitarSobreposicaoRotulos(){
     ];
     let escolhido = candidatos
       .map(c => ({...c, r:{left:it.left0 + c.dx, right:it.left0 + c.dx + it.w, top:it.top0 + c.dy, bottom:it.top0 + c.dy + it.h}}))
-      .find(c => !colocados.some(p => sobrepoe(c.r, p)));
+      .find(c => !obstaculos.some(p => sobrepoe(c.r, p)));
     if (!escolhido){
-      // não sobrou nenhuma posição do leque (muitos rótulos bem grudados): desce até achar
+      // não sobrou nenhuma posição do leque (muitos rótulos/pontos bem grudados): desce até achar
       let dy = 5 * passo, r;
       do { r = {left:it.left0, right:it.left0 + it.w, top:it.top0 + dy, bottom:it.top0 + dy + it.h}; dy += passo; }
-      while (colocados.some(p => sobrepoe(r, p)) && dy < 20 * passo);
+      while (obstaculos.some(p => sobrepoe(r, p)) && dy < 20 * passo);
       escolhido = {dx:0, dy:dy - passo, r};
     }
     if (escolhido.dx) it.el.style.marginLeft = escolhido.dx + "px";
