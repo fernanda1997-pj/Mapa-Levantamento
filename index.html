@@ -2809,7 +2809,7 @@ function atualizarGuiaPrancha(){
   gs.textContent = sub; gs.style.display = sub ? "" : "none";
   const cont = document.getElementById("guia-legenda-itens");
   cont.innerHTML = "";
-  const itens = itensLegendaPrancha().slice(0, 18);
+  const itens = itensLegendaPrancha();
   if (!itens.length){
     cont.innerHTML = `<div style="color:#94a3b8; font-style:italic">(nada visível na área)</div>`;
     return;
@@ -2928,13 +2928,18 @@ async function inserirMediaKm(){
 function coordTxtPrancha(lat, lng){
   return ` (${lat.toFixed(6)}°, ${lng.toFixed(6)}°)`;
 }
+/* true se o ponto cai dentro do retângulo do mapa capturado (em pixels de tela, com uma
+   margem) — mais preciso que map.getBounds() (retângulo geográfico): perto dos polos/em
+   zooms baixos, a % de folga do getBounds vira pixels bem diferentes do que a imagem
+   realmente captura, então um ponto na borda podia continuar de fora mesmo com folga */
+function pontoNaVista(lat, lng, margemPx = 25){
+  const p = map.latLngToContainerPoint([lat, lng]), s = map.getSize();
+  return p.x >= -margemPx && p.x <= s.x + margemPx && p.y >= -margemPx && p.y <= s.y + margemPx;
+}
 function itensLegendaPrancha(){
-  // pad(): ponto bem na borda da vista podia aparecer na imagem capturada mas ficar
-  // tecnicamente fora do map.getBounds() (alguns pixels de sobra do render/captura),
-  // sumindo da legenda mesmo estando visível — 3% de folga cobre essa borda
-  const itens = [], vb = map.getBounds().pad(0.03);
+  const itens = [];
   pontosFixos.forEach(p => {
-    if (ocultosManuais.has(p.id) || !vb.contains([p.lat, p.lng])) return;
+    if (ocultosManuais.has(p.id) || !pontoNaVista(p.lat, p.lng)) return;
     const c = CATEGORIAS[p.categoria] || CATEGORIAS.outro;
     itens.push({tipo:"ponto", cor:p.cor || c.cor, rot:p.nome + coordTxtPrancha(p.lat, p.lng)});
   });
@@ -2943,12 +2948,13 @@ function itensLegendaPrancha(){
   Object.entries(porCat).forEach(([cat, pts]) => {
     const grupo = gruposFixosArquivo[cat];
     if (!grupo || !map.hasLayer(grupo)) return;
-    const vis = pts.filter(p => !ocultosArquivo.has(idArq(p)) && vb.contains([p.lat, p.lng]));
+    const vis = pts.filter(p => !ocultosArquivo.has(idArq(p)) && pontoNaVista(p.lat, p.lng));
     if (!vis.length) return;
     const c = CATEGORIAS[cat] || CATEGORIAS.outro;
     if (vis.length <= 8) vis.forEach(p => itens.push({tipo:"ponto", cor:c.cor, rot:p.nome + coordTxtPrancha(p.lat, p.lng)}));
     else itens.push({tipo:"ponto", cor:c.cor, rot:`${c.plural} (${vis.length})`});
   });
+  const vb = map.getBounds();
   Object.entries(camadasRotasArquivo).forEach(([nome, o]) => {
     if (map.hasLayer(o.linha) && vb.intersects(o.linha.getBounds()))
       itens.push({tipo:"linha", cor:o.cor, rot:`${nome} · ${o.km}`});
@@ -2960,7 +2966,7 @@ function itensLegendaPrancha(){
     const nome = l._nomeRTA || "(sem nome)";
     if (l instanceof L.Marker){
       const ll = l.getLatLng();
-      if (vb.contains(ll)) itens.push({tipo:"ponto", cor, rot:nome + coordTxtPrancha(ll.lat, ll.lng)});
+      if (pontoNaVista(ll.lat, ll.lng)) itens.push({tipo:"ponto", cor, rot:nome + coordTxtPrancha(ll.lat, ll.lng)});
     } else if (l.getBounds && vb.intersects(l.getBounds())){
       const {medida} = infoGeom(l);
       itens.push({tipo:"linha", cor, rot:nome + (medida ? ` · ${medida}` : "")});
@@ -2976,21 +2982,23 @@ function itensLegendaPrancha(){
   return itens;
 }
 /* pontos (com nome/coords/km) que entram no bloco COORDENADAS da prancha;
-   canteiros de obras vêm primeiro (são a referência dos KM) */
-function listaCoordenadasPrancha(limite = 14){
-  const vb = map.getBounds().pad(0.03), lista = []; // mesma folga de borda do itensLegendaPrancha
+   canteiros de obras vêm primeiro (são a referência dos KM). Sem limite por padrão — a
+   caixa da prancha já cresce sozinha pra caber todo mundo (era 14 antes, cortava ponto
+   sem avisar; quem quiser um teto explícito continua podendo passar um número) */
+function listaCoordenadasPrancha(limite = Infinity){
+  const lista = []; // pontoNaVista() usa pixels da tela — mesma folga do itensLegendaPrancha
   pontosFixos.forEach(p => {
-    if (!ocultosManuais.has(p.id) && vb.contains([p.lat, p.lng]))
+    if (!ocultosManuais.has(p.id) && pontoNaVista(p.lat, p.lng))
       lista.push({nome:p.nome, lat:p.lat, lng:p.lng, km:p.km || "", categoria:p.categoria});
   });
   fixosArquivo.forEach(p => {
     const grupo = gruposFixosArquivo[p.categoria];
-    if (grupo && map.hasLayer(grupo) && !ocultosArquivo.has(idArq(p)) && vb.contains([p.lat, p.lng]))
+    if (grupo && map.hasLayer(grupo) && !ocultosArquivo.has(idArq(p)) && pontoNaVista(p.lat, p.lng))
       lista.push({nome:p.nome, lat:p.lat, lng:p.lng, km:"", categoria:p.categoria});
   });
   Object.values(camadasDesenho).forEach(l => {
     if (ocultosDesenho.has(l._idRTA)) return;
-    if (l instanceof L.Marker && vb.contains(l.getLatLng())){
+    if (l instanceof L.Marker && pontoNaVista(l.getLatLng().lat, l.getLatLng().lng)){
       const ll = l.getLatLng();
       lista.push({nome:l._nomeRTA || "(sem nome)", lat:ll.lat, lng:ll.lng, km:"", categoria:""});
     }
@@ -3059,7 +3067,7 @@ function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas, memoria, 
   texto(titulo, cx, ly0 + altLogos + 24, "bold 22px Segoe UI, Arial", "#0f172a", "center");
   if (subtitulo) texto(subtitulo, cx, ly0 + altLogos + 44, "14px Segoe UI, Arial", "#334155", "center");
   /* --- legenda (sup-dir) --- */
-  const itens = itensLegendaPrancha().slice(0, 18);
+  const itens = itensLegendaPrancha();
   const legFS = 13;
   const altItem = it => it.tipo === "sub" ? 18 : 24;
   g.font = legFS + "px Segoe UI, Arial";
