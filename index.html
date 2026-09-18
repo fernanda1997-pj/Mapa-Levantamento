@@ -2929,7 +2929,10 @@ function coordTxtPrancha(lat, lng){
   return ` (${lat.toFixed(6)}°, ${lng.toFixed(6)}°)`;
 }
 function itensLegendaPrancha(){
-  const itens = [], vb = map.getBounds();
+  // pad(): ponto bem na borda da vista podia aparecer na imagem capturada mas ficar
+  // tecnicamente fora do map.getBounds() (alguns pixels de sobra do render/captura),
+  // sumindo da legenda mesmo estando visível — 3% de folga cobre essa borda
+  const itens = [], vb = map.getBounds().pad(0.03);
   pontosFixos.forEach(p => {
     if (ocultosManuais.has(p.id) || !vb.contains([p.lat, p.lng])) return;
     const c = CATEGORIAS[p.categoria] || CATEGORIAS.outro;
@@ -2975,7 +2978,7 @@ function itensLegendaPrancha(){
 /* pontos (com nome/coords/km) que entram no bloco COORDENADAS da prancha;
    canteiros de obras vêm primeiro (são a referência dos KM) */
 function listaCoordenadasPrancha(limite = 14){
-  const vb = map.getBounds(), lista = [];
+  const vb = map.getBounds().pad(0.03), lista = []; // mesma folga de borda do itensLegendaPrancha
   pontosFixos.forEach(p => {
     if (!ocultosManuais.has(p.id) && vb.contains([p.lat, p.lng]))
       lista.push({nome:p.nome, lat:p.lat, lng:p.lng, km:p.km || "", categoria:p.categoria});
