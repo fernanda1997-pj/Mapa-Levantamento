@@ -3174,12 +3174,85 @@ function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas, memoria, 
   }
   return cv;
 }
-/* distância pela estrada (OSRM table) de um ponto de referência até cada ponto */
+/* acha a distância da referência até cada ponto USANDO A REDE das rotas que ela já
+   desenhou (encadeando pelos pontos onde uma rota emenda na outra) — essas rotas já têm a
+   distância certa (inclusive trecho de chão/atalho que não está no OpenStreetMap, tratado
+   pelo "trecho misto"); o OSRM público só conhece estrada mapeada e pode dar uma volta bem
+   maior por não saber desse atalho. Retorna um Map ponto->metros só do que deu pra
+   encadear; o resto continua indo pro OSRM (fallback em calcularKmsDesde) */
+function distanciasPelaRedeDesenhada(refLat, refLng, coords){
+  const TOL_JUNCAO = 60, TOL_SNAP = 150; // metros
+  const rotas = Object.values(camadasDesenho)
+    .filter(l => l instanceof L.Polyline && !(l instanceof L.Polygon) && !ocultosDesenho.has(l._idRTA))
+    .map(l => {
+      const lls = l.getLatLngs();
+      const pts = Array.isArray(lls[0]) ? lls.flat() : lls;
+      if (pts.length < 2) return null;
+      const acumulado = [0];
+      for (let i = 1; i < pts.length; i++) acumulado.push(acumulado[i - 1] + map.distance(pts[i - 1], pts[i]));
+      return {pts, acumulado, total: acumulado[acumulado.length - 1]};
+    })
+    .filter(r => r && r.total > 0);
+  const resultado = new Map();
+  if (!rotas.length) return resultado;
+
+  // ponto mais perto (com distância até ele) em qualquer vértice de qualquer rota
+  const localizar = pt => {
+    let melhor = null;
+    rotas.forEach(r => r.pts.forEach((p, i) => {
+      const d = map.distance(p, pt);
+      if (!melhor || d < melhor.dist) melhor = {dist:d, rota:r, idx:i};
+    }));
+    return (melhor && melhor.dist <= TOL_SNAP) ? melhor : null;
+  };
+
+  const refLoc = localizar(L.latLng(refLat, refLng));
+  if (!refLoc) return resultado; // referência não tá em cima de nenhuma rota desenhada
+
+  const distInicio = new Map(); // rota -> distância (m) da referência até o vértice 0 dela
+  const anchors = [];           // extremos de rota já resolvida, com distância conhecida
+  const resolver = (rota, distAoInicio) => {
+    if (distInicio.has(rota)) return;
+    distInicio.set(rota, distAoInicio);
+    anchors.push({pt: rota.pts[0], dist: distAoInicio});
+    anchors.push({pt: rota.pts[rota.pts.length - 1], dist: distAoInicio + rota.total});
+  };
+  resolver(refLoc.rota, refLoc.dist + refLoc.rota.acumulado[refLoc.idx]);
+
+  // propaga por "junção" (extremo de uma rota encostando no extremo/anchor de outra já
+  // resolvida) até não sobrar mais nenhuma rota nova pra encadear
+  let mudou = true;
+  while (mudou){
+    mudou = false;
+    for (const r of rotas){
+      if (distInicio.has(r)) continue;
+      for (const a of anchors){
+        if (map.distance(r.pts[0], a.pt) <= TOL_JUNCAO){ resolver(r, a.dist); mudou = true; break; }
+        if (map.distance(r.pts[r.pts.length - 1], a.pt) <= TOL_JUNCAO){ resolver(r, a.dist - r.total); mudou = true; break; }
+      }
+      if (mudou) break;
+    }
+  }
+
+  coords.forEach(p => {
+    const loc = localizar(L.latLng(p.lat, p.lng));
+    if (loc && distInicio.has(loc.rota))
+      resultado.set(p, distInicio.get(loc.rota) + loc.rota.acumulado[loc.idx] + loc.dist);
+  });
+  return resultado;
+}
+/* distância pela estrada de um ponto de referência até cada ponto: primeiro tenta pela
+   rede de rotas desenhadas (exata); o que não encadeia cai pro OSRM público (table) */
 async function calcularKmsDesde(refLat, refLng, coords){
   if (!coords.length) return coords;
+  distanciasPelaRedeDesenhada(refLat, refLng, coords).forEach((m, p) => {
+    if (!p.km && m > 30) p.km = (m / 1000).toLocaleString("pt-BR", {maximumFractionDigits:2});
+  });
+  const faltando = coords.filter(p => !p.km);
+  if (!faltando.length) return coords;
   try {
     const str = [`${refLng.toFixed(6)},${refLat.toFixed(6)}`,
-                 ...coords.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`)].join(";");
+                 ...faltando.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`)].join(";");
     const resp = await Promise.race([
       fetch(`https://router.project-osrm.org/table/v1/driving/${str}?sources=0&annotations=distance`),
       new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 20000)),
@@ -3187,13 +3260,13 @@ async function calcularKmsDesde(refLat, refLng, coords){
     const j = await resp.json();
     if (j.code !== "Ok" || !j.distances) throw new Error(j.message || "sem resposta");
     const dist = j.distances[0].slice(1);
-    coords.forEach((p, i) => {
+    faltando.forEach((p, i) => {
       const m = dist[i];
       if (!p.km && m != null && m > 30)
         p.km = (m / 1000).toLocaleString("pt-BR", {maximumFractionDigits:2});
     });
   } catch (e) {
-    aviso("Não deu para calcular os KM pela estrada (" + (e.message || e) + ").");
+    aviso("Não deu para calcular os KM pela estrada de alguns pontos (" + (e.message || e) + ").");
   }
   return coords;
 }
