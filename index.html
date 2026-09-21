@@ -3181,7 +3181,7 @@ function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas, memoria, 
    maior por não saber desse atalho. Retorna um Map ponto->metros só do que deu pra
    encadear; o resto continua indo pro OSRM (fallback em calcularKmsDesde) */
 function distanciasPelaRedeDesenhada(refLat, refLng, coords){
-  const TOL_JUNCAO = 60, TOL_SNAP = 150; // metros
+  const TOL_JUNCAO = 30, TOL_SNAP = 40; // metros — apertado de propósito (ver nota abaixo)
   const rotas = Object.values(camadasDesenho)
     .filter(l => l instanceof L.Polyline && !(l instanceof L.Polygon) && !ocultosDesenho.has(l._idRTA))
     .map(l => {
@@ -3196,17 +3196,18 @@ function distanciasPelaRedeDesenhada(refLat, refLng, coords){
   const resultado = new Map();
   if (!rotas.length) return resultado;
 
-  // ponto mais perto (com distância até ele) em qualquer vértice de qualquer rota
-  const localizar = pt => {
+  // ponto mais perto (com distância até ele) em qualquer vértice de uma LISTA de rotas
+  const localizarEm = (lista, pt) => {
     let melhor = null;
-    rotas.forEach(r => r.pts.forEach((p, i) => {
+    lista.forEach(r => r.pts.forEach((p, i) => {
       const d = map.distance(p, pt);
       if (!melhor || d < melhor.dist) melhor = {dist:d, rota:r, idx:i};
     }));
     return (melhor && melhor.dist <= TOL_SNAP) ? melhor : null;
   };
 
-  const refLoc = localizar(L.latLng(refLat, refLng));
+  // acha em qual rota a referência está (procura em TODAS, só pra achar o ponto de partida)
+  const refLoc = localizarEm(rotas, L.latLng(refLat, refLng));
   if (!refLoc) return resultado; // referência não tá em cima de nenhuma rota desenhada
 
   const distInicio = new Map(); // rota -> distância (m) da referência até o vértice 0 dela
@@ -3234,10 +3235,14 @@ function distanciasPelaRedeDesenhada(refLat, refLng, coords){
     }
   }
 
+  // cada ponto-alvo só pode "grudar" numa rota que JÁ FAZ PARTE da rede conectada à
+  // referência — procurar em TODAS as rotas do levantamento (estadual, dezenas de trechos)
+  // deixava um ponto perto de um trecho qualquer, sem relação nenhuma com a referência,
+  // roubar o lugar do trecho certo e dar uma distância sem sentido
+  const conectadas = rotas.filter(r => distInicio.has(r));
   coords.forEach(p => {
-    const loc = localizar(L.latLng(p.lat, p.lng));
-    if (loc && distInicio.has(loc.rota))
-      resultado.set(p, distInicio.get(loc.rota) + loc.rota.acumulado[loc.idx] + loc.dist);
+    const loc = localizarEm(conectadas, L.latLng(p.lat, p.lng));
+    if (loc) resultado.set(p, distInicio.get(loc.rota) + loc.rota.acumulado[loc.idx] + loc.dist);
   });
   return resultado;
 }
