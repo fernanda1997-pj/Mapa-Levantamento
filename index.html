@@ -3250,10 +3250,17 @@ function distanciasPelaRedeDesenhada(refLat, refLng, coords){
    rede de rotas desenhadas (exata); o que não encadeia cai pro OSRM público (table) */
 async function calcularKmsDesde(refLat, refLng, coords){
   if (!coords.length) return coords;
+  // "resolvido" != "tem km pra mostrar": a própria referência (ou um ponto bem em cima
+  // dela) dá 0m pela rede — certo não mostrar "KM 0,00", mas errado tratar como "não
+  // resolveu" e mandar pro OSRM público, que podia inventar uma distância (tipo a
+  // referência "até ela mesma" saindo diferente de zero por causa de como o OSRM encaixa
+  // o ponto na estrada mais próxima)
+  const resolvidosPelaRede = new Set();
   distanciasPelaRedeDesenhada(refLat, refLng, coords).forEach((m, p) => {
+    resolvidosPelaRede.add(p);
     if (!p.km && m > 30) p.km = (m / 1000).toLocaleString("pt-BR", {maximumFractionDigits:2});
   });
-  const faltando = coords.filter(p => !p.km);
+  const faltando = coords.filter(p => !resolvidosPelaRede.has(p) && !p.km);
   if (!faltando.length) return coords;
   try {
     const str = [`${refLng.toFixed(6)},${refLat.toFixed(6)}`,
