@@ -3180,7 +3180,7 @@ function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas, memoria, 
    pelo "trecho misto"); o OSRM público só conhece estrada mapeada e pode dar uma volta bem
    maior por não saber desse atalho. Retorna um Map ponto->metros só do que deu pra
    encadear; o resto continua indo pro OSRM (fallback em calcularKmsDesde) */
-function distanciasPelaRedeDesenhada(refLat, refLng, coords){
+function distanciasPelaRedeDesenhada(refLat, refLng, coords, diagnostico){
   const TOL_JUNCAO = 30, TOL_SNAP = 40; // metros — apertado de propósito (ver nota abaixo)
   const rotas = Object.values(camadasDesenho)
     .filter(l => l instanceof L.Polyline && !(l instanceof L.Polygon) && !ocultosDesenho.has(l._idRTA))
@@ -3190,7 +3190,7 @@ function distanciasPelaRedeDesenhada(refLat, refLng, coords){
       if (pts.length < 2) return null;
       const acumulado = [0];
       for (let i = 1; i < pts.length; i++) acumulado.push(acumulado[i - 1] + map.distance(pts[i - 1], pts[i]));
-      return {pts, acumulado, total: acumulado[acumulado.length - 1]};
+      return {nome: l._nomeRTA || "(sem nome)", pts, acumulado, total: acumulado[acumulado.length - 1]};
     })
     .filter(r => r && r.total > 0);
   const resultado = new Map();
@@ -3208,6 +3208,7 @@ function distanciasPelaRedeDesenhada(refLat, refLng, coords){
 
   // acha em qual rota a referência está (procura em TODAS, só pra achar o ponto de partida)
   const refLoc = localizarEm(rotas, L.latLng(refLat, refLng));
+  if (diagnostico) diagnostico.push({ponto:"(referência)", rota: refLoc?.rota.nome || "—", grudouA_m: refLoc ? Math.round(refLoc.dist) : "—"});
   if (!refLoc) return resultado; // referência não tá em cima de nenhuma rota desenhada
 
   const distInicio = new Map(); // rota -> distância (m) da referência até o vértice 0 dela
@@ -3242,12 +3243,37 @@ function distanciasPelaRedeDesenhada(refLat, refLng, coords){
   const conectadas = rotas.filter(r => distInicio.has(r));
   coords.forEach(p => {
     const loc = localizarEm(conectadas, L.latLng(p.lat, p.lng));
-    if (loc) resultado.set(p, distInicio.get(loc.rota) + loc.rota.acumulado[loc.idx] + loc.dist);
+    const km = loc ? distInicio.get(loc.rota) + loc.rota.acumulado[loc.idx] + loc.dist : null;
+    if (loc) resultado.set(p, km);
+    if (diagnostico) diagnostico.push({
+      ponto: p.nome, rota: loc ? loc.rota.nome : "(caiu pro OSRM)",
+      grudouA_m: loc ? Math.round(loc.dist) : "—",
+      km_pela_rede: km != null ? (km / 1000).toFixed(2) : "—",
+    });
   });
   return resultado;
 }
+/* pede um lote (até ~25 pontos) de distância pro OSRM público — em lotes menores porque
+   um pedido só com centenas de pontos (levantamento estadual) pode estourar limite de
+   tamanho/quantidade do servidor público e falhar por inteiro, deixando tudo em branco */
+async function calcularKmsOsrmLote(refLat, refLng, lote){
+  const str = [`${refLng.toFixed(6)},${refLat.toFixed(6)}`,
+               ...lote.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`)].join(";");
+  const resp = await Promise.race([
+    fetch(`https://router.project-osrm.org/table/v1/driving/${str}?sources=0&annotations=distance`),
+    new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 20000)),
+  ]);
+  const j = await resp.json();
+  if (j.code !== "Ok" || !j.distances) throw new Error(j.message || "sem resposta");
+  const dist = j.distances[0].slice(1);
+  lote.forEach((p, i) => {
+    const m = dist[i];
+    if (!p.km && m != null && m > 30) p.km = (m / 1000).toLocaleString("pt-BR", {maximumFractionDigits:2});
+  });
+}
 /* distância pela estrada de um ponto de referência até cada ponto: primeiro tenta pela
-   rede de rotas desenhadas (exata); o que não encadeia cai pro OSRM público (table) */
+   rede de rotas desenhadas (exata); o que não encadeia cai pro OSRM público (table, em
+   lotes — um lote que falhar não derruba os outros) */
 async function calcularKmsDesde(refLat, refLng, coords){
   if (!coords.length) return coords;
   // "resolvido" != "tem km pra mostrar": a própria referência (ou um ponto bem em cima
@@ -3256,30 +3282,25 @@ async function calcularKmsDesde(refLat, refLng, coords){
   // referência "até ela mesma" saindo diferente de zero por causa de como o OSRM encaixa
   // o ponto na estrada mais próxima)
   const resolvidosPelaRede = new Set();
-  distanciasPelaRedeDesenhada(refLat, refLng, coords).forEach((m, p) => {
+  const diagnostico = []; // console.table no fim — ajuda a achar ponto que grudou errado
+  distanciasPelaRedeDesenhada(refLat, refLng, coords, diagnostico).forEach((m, p) => {
     resolvidosPelaRede.add(p);
     if (!p.km && m > 30) p.km = (m / 1000).toLocaleString("pt-BR", {maximumFractionDigits:2});
   });
   const faltando = coords.filter(p => !resolvidosPelaRede.has(p) && !p.km);
-  if (!faltando.length) return coords;
-  try {
-    const str = [`${refLng.toFixed(6)},${refLat.toFixed(6)}`,
-                 ...faltando.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`)].join(";");
-    const resp = await Promise.race([
-      fetch(`https://router.project-osrm.org/table/v1/driving/${str}?sources=0&annotations=distance`),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 20000)),
-    ]);
-    const j = await resp.json();
-    if (j.code !== "Ok" || !j.distances) throw new Error(j.message || "sem resposta");
-    const dist = j.distances[0].slice(1);
-    faltando.forEach((p, i) => {
-      const m = dist[i];
-      if (!p.km && m != null && m > 30)
-        p.km = (m / 1000).toLocaleString("pt-BR", {maximumFractionDigits:2});
-    });
-  } catch (e) {
-    aviso("Não deu para calcular os KM pela estrada de alguns pontos (" + (e.message || e) + ").");
+  if (faltando.length){
+    const TAM_LOTE = 25;
+    const erros = [];
+    for (let i = 0; i < faltando.length; i += TAM_LOTE){
+      try {
+        await calcularKmsOsrmLote(refLat, refLng, faltando.slice(i, i + TAM_LOTE));
+      } catch (e) {
+        erros.push(e.message || String(e));
+      }
+    }
+    if (erros.length) aviso(`Não deu para calcular os KM pela estrada de alguns pontos (${erros[0]}).`);
   }
+  console.table(diagnostico); // F12 > Console, pra ver em qual rota cada ponto grudou
   return coords;
 }
 async function calcularKmsPrancha(coords){
