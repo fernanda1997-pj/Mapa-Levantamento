@@ -3211,15 +3211,21 @@ function distanciasPelaRedeDesenhada(refLat, refLng, coords, diagnostico){
   if (diagnostico) diagnostico.push({ponto:"(referência)", rota: refLoc?.rota.nome || "—", grudouA_m: refLoc ? Math.round(refLoc.dist) : "—"});
   if (!refLoc) return resultado; // referência não tá em cima de nenhuma rota desenhada
 
-  const distInicio = new Map(); // rota -> distância (m) da referência até o vértice 0 dela
-  const anchors = [];           // extremos de rota já resolvida, com distância conhecida
-  const resolver = (rota, distAoInicio) => {
-    if (distInicio.has(rota)) return;
-    distInicio.set(rota, distAoInicio);
-    anchors.push({pt: rota.pts[0], dist: distAoInicio});
-    anchors.push({pt: rota.pts[rota.pts.length - 1], dist: distAoInicio + rota.total});
+  // entrada[rota] = {baseDist, idx}: baseDist é quanto já se andou (a partir da
+  // referência) até ENTRAR nessa rota, no vértice "idx" — não necessariamente o vértice 0!
+  // A distância até qualquer outro ponto da MESMA rota é baseDist + a diferença de
+  // "acumulado" até o índice de entrada (pra qualquer lado, daí o Math.abs), nunca via o
+  // vértice 0 como antes — isso dava conta dobrada (ida e volta) sempre que a referência
+  // ou um ponto entrava no meio/fim da rota em vez de bem no começo dela
+  const entrada = new Map();
+  const anchors = []; // pontas de rota já resolvida, com distância conhecida da referência
+  const resolver = (rota, baseDist, idx) => {
+    if (entrada.has(rota)) return;
+    entrada.set(rota, {baseDist, idx});
+    anchors.push({pt: rota.pts[0], dist: baseDist + rota.acumulado[idx]});
+    anchors.push({pt: rota.pts[rota.pts.length - 1], dist: baseDist + (rota.total - rota.acumulado[idx])});
   };
-  resolver(refLoc.rota, refLoc.dist + refLoc.rota.acumulado[refLoc.idx]);
+  resolver(refLoc.rota, refLoc.dist, refLoc.idx);
 
   // propaga por "junção" (extremo de uma rota encostando no extremo/anchor de outra já
   // resolvida) até não sobrar mais nenhuma rota nova pra encadear
@@ -3227,10 +3233,10 @@ function distanciasPelaRedeDesenhada(refLat, refLng, coords, diagnostico){
   while (mudou){
     mudou = false;
     for (const r of rotas){
-      if (distInicio.has(r)) continue;
+      if (entrada.has(r)) continue;
       for (const a of anchors){
-        if (map.distance(r.pts[0], a.pt) <= TOL_JUNCAO){ resolver(r, a.dist); mudou = true; break; }
-        if (map.distance(r.pts[r.pts.length - 1], a.pt) <= TOL_JUNCAO){ resolver(r, a.dist - r.total); mudou = true; break; }
+        if (map.distance(r.pts[0], a.pt) <= TOL_JUNCAO){ resolver(r, a.dist, 0); mudou = true; break; }
+        if (map.distance(r.pts[r.pts.length - 1], a.pt) <= TOL_JUNCAO){ resolver(r, a.dist, r.pts.length - 1); mudou = true; break; }
       }
       if (mudou) break;
     }
@@ -3240,11 +3246,15 @@ function distanciasPelaRedeDesenhada(refLat, refLng, coords, diagnostico){
   // referência — procurar em TODAS as rotas do levantamento (estadual, dezenas de trechos)
   // deixava um ponto perto de um trecho qualquer, sem relação nenhuma com a referência,
   // roubar o lugar do trecho certo e dar uma distância sem sentido
-  const conectadas = rotas.filter(r => distInicio.has(r));
+  const conectadas = rotas.filter(r => entrada.has(r));
   coords.forEach(p => {
     const loc = localizarEm(conectadas, L.latLng(p.lat, p.lng));
-    const km = loc ? distInicio.get(loc.rota) + loc.rota.acumulado[loc.idx] + loc.dist : null;
-    if (loc) resultado.set(p, km);
+    let km = null;
+    if (loc){
+      const e = entrada.get(loc.rota);
+      km = e.baseDist + Math.abs(loc.rota.acumulado[loc.idx] - loc.rota.acumulado[e.idx]) + loc.dist;
+      resultado.set(p, km);
+    }
     if (diagnostico) diagnostico.push({
       ponto: p.nome, rota: loc ? loc.rota.nome : "(caiu pro OSRM)",
       grudouA_m: loc ? Math.round(loc.dist) : "—",
