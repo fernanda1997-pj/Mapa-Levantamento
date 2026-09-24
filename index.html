@@ -806,6 +806,7 @@ function aplicarRotulo(m, nome, deslocamento){
   m.bindTooltip(nome, rotulosAtivos
     ? {permanent:true, direction:"right", offset:deslocamento || [13, -18], className:"rotulo-halo"}
     : {});
+  agendarReposicaoRotulosMapa();
 }
 function alternarRotulos(){
   rotulosAtivos = !rotulosAtivos;
@@ -3491,6 +3492,20 @@ function evitarSobreposicaoRotulos(){
   });
   return () => itens.forEach(it => { it.el.style.marginLeft = ""; it.el.style.marginTop = ""; });
 }
+/* mesma lógica acima, mas mantida ativa no mapa ao vivo (não só na hora de capturar
+   a prancha) — sem isso, rótulo de ponto perto de outro ficava ilegível direto na
+   tela, só saía separado na prancha exportada */
+let _restaurarRotulosMapa = null;
+function reposicionarRotulosMapa(){
+  if (_restaurarRotulosMapa){ _restaurarRotulosMapa(); _restaurarRotulosMapa = null; }
+  _restaurarRotulosMapa = evitarSobreposicaoRotulos();
+}
+let _timerRotulosMapa = null;
+function agendarReposicaoRotulosMapa(){
+  clearTimeout(_timerRotulosMapa);
+  _timerRotulosMapa = setTimeout(reposicionarRotulosMapa, 150);
+}
+map.on("zoomend moveend", agendarReposicaoRotulosMapa);
 async function gerarPrancha(){
   const bt = document.getElementById("pr-gerar");
   bt.disabled = true; bt.textContent = "Gerando...";
@@ -3518,6 +3533,7 @@ async function gerarPrancha(){
       ]);
     } finally {
       restaurarRotulos();
+      reposicionarRotulosMapa(); // reaplica o ajuste ao vivo, que a linha acima acabou de limpar
     }
     const titulo = document.getElementById("pr-titulo").value.trim() || "MAPA DE LOCALIZAÇÃO";
     const sub = document.getElementById("pr-sub").value.trim();
@@ -3565,6 +3581,7 @@ function confirmarDownloadPrancha(){
 /* ================= Inicialização ================= */
 renderizarRotasArquivo();
 renderizarTodosFixos(); // já chama renderizarTrechos() no final
+agendarReposicaoRotulosMapa();
 carregarDesenhos();
 
 /* overlay de carregamento: some quando o mapa fica pronto (com rede de segurança) */
