@@ -175,7 +175,8 @@
         <div class="corpo">
           <div class="radio-base" id="bases">
             <label><input type="radio" name="base" value="osm" checked>Padrão</label>
-            <label><input type="radio" name="base" value="sat">Satélite</label>
+            <label><input type="radio" name="base" value="sat">Satélite (Esri)</label>
+            <label><input type="radio" name="base" value="satGoogle">Satélite (Google)</label>
             <label><input type="radio" name="base" value="escuro">Escuro</label>
           </div>
         </div>
@@ -446,6 +447,8 @@ const bases = {
       {maxZoom:19, attribution:"© OpenStreetMap", crossOrigin:true}),
   sat: L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       {maxZoom:19, attribution:"© Esri", crossOrigin:true}),
+  satGoogle: L.tileLayer("https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+      {maxZoom:20, subdomains:["mt0","mt1","mt2","mt3"], attribution:"© Google", crossOrigin:true}),
   escuro: L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
       {maxZoom:19, attribution:"© CARTO", crossOrigin:true}),
 };
@@ -3139,7 +3142,7 @@ function montarPrancha(mapCv, titulo, subtitulo, logos, coordsProntas, memoria, 
   texto("N", nx, ny + 6, "bold 15px Segoe UI, Arial", "#0f172a", "center");
   /* --- rodapé (inf-esq) --- */
   const denom = Math.round(mpp / (0.0254 / 96));
-  const fontes = {osm:"OpenStreetMap", sat:"Esri World Imagery", escuro:"CARTO"};
+  const fontes = {osm:"OpenStreetMap", sat:"Esri World Imagery", satGoogle:"Google Satellite", escuro:"CARTO"};
   const baseAtiva = document.querySelector('#bases input:checked')?.value || "osm";
   const d = new Date();
   const dstr = `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`;
