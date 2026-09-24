@@ -179,6 +179,9 @@
             <label><input type="radio" name="base" value="satGoogle">Satélite (Google)</label>
             <label><input type="radio" name="base" value="escuro">Escuro</label>
           </div>
+          <label style="display:flex; align-items:center; gap:6px; margin-top:10px; font-weight:400">
+            <input type="checkbox" id="chk-rotulos"> Nomes das rodovias (sobre o satélite)
+          </label>
         </div>
       </details>
 
@@ -479,6 +482,15 @@ L.control.scale({imperial:false, position:"bottomleft"}).addTo(map);
 document.getElementById("bases").addEventListener("change", e => {
   Object.values(bases).forEach(b => map.removeLayer(b));
   bases[e.target.value].addTo(map);
+});
+
+/* rótulos: nomes/números das rodovias por cima do satélite (o Esri/Google satélite
+   puro não tem texto nenhum, então sem isso fica sem nenhuma referência de rodovia) */
+const camadaRotulos = L.tileLayer("https://{s}.google.com/vt/lyrs=h&x={x}&y={y}&z={z}",
+    {maxZoom:20, subdomains:["mt0","mt1","mt2","mt3"], attribution:"© Google", crossOrigin:true});
+document.getElementById("chk-rotulos").addEventListener("change", e => {
+  if (e.target.checked) camadaRotulos.addTo(map);
+  else map.removeLayer(camadaRotulos);
 });
 
 /* ================= Regiões ================= */
