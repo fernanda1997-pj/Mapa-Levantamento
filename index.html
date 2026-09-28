@@ -3464,6 +3464,11 @@ function evitarSobreposicaoRotulos(){
   const sobrepoe = (a, b) => a.left < b.right + folga && a.right > b.left - folga
                            && a.top < b.bottom + folga && a.bottom > b.top - folga;
   const colocados = [...marcadores];
+  // quando o rótulo precisa se afastar bastante do ponto pra não sobrepor ninguém,
+  // uma linha fina liga o rótulo deslocado até a posição original dele (perto do
+  // marcador) — senão fica impossível saber de qual pino é cada nome empilhado
+  const mapRect = map.getContainer().getBoundingClientRect();
+  const svg = garantirSvgLinhasRotulo();
   itens.forEach(it => {
     const obstaculos = it.dono ? colocados.filter(o => o !== it.dono) : colocados;
     const passo = it.h + folga;
@@ -3488,9 +3493,45 @@ function evitarSobreposicaoRotulos(){
     }
     if (escolhido.dx) it.el.style.marginLeft = escolhido.dx + "px";
     if (escolhido.dy) it.el.style.marginTop = escolhido.dy + "px";
+    if (Math.hypot(escolhido.dx, escolhido.dy) > 18){
+      // a linha sai do PONTO/marcador de verdade (não do lugar onde o rótulo nasceria),
+      // pra realmente indicar "esse nome é deste pino" — só desenha se aparecer na tela
+      const de = it.dono
+        ? {x:it.dono.cx - mapRect.left, y:it.dono.cy - mapRect.top}
+        : {x:it.left0 - mapRect.left, y:it.top0 + it.h / 2 - mapRect.top};
+      const para = {x:it.left0 + escolhido.dx - mapRect.left, y:it.top0 + escolhido.dy + it.h / 2 - mapRect.top};
+      const naTela = p => p.x > -50 && p.x < mapRect.width + 50 && p.y > -50 && p.y < mapRect.height + 50;
+      if (naTela(de) || naTela(para)) desenharLinhaRotulo(svg, de, para);
+    }
     colocados.push(escolhido.r);
   });
   return () => itens.forEach(it => { it.el.style.marginLeft = ""; it.el.style.marginTop = ""; });
+}
+/* svg fininho por cima do mapa, só pra desenhar as linhas de ligação rótulo↔ponto
+   (fica dentro do container do mapa pra sair também na captura da prancha) */
+function garantirSvgLinhasRotulo(){
+  let svg = document.getElementById("svg-linhas-rotulo");
+  if (!svg){
+    svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("id", "svg-linhas-rotulo");
+    Object.assign(svg.style, {position:"absolute", left:"0", top:"0", width:"100%", height:"100%",
+      pointerEvents:"none", zIndex:620});
+    map.getContainer().appendChild(svg);
+  }
+  svg.innerHTML = "";
+  return svg;
+}
+function desenharLinhaRotulo(svg, de, para){
+  const linha = (largura, cor, opacidade) => {
+    const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    l.setAttribute("x1", de.x); l.setAttribute("y1", de.y);
+    l.setAttribute("x2", para.x); l.setAttribute("y2", para.y);
+    l.setAttribute("stroke", cor); l.setAttribute("stroke-width", largura);
+    l.setAttribute("stroke-opacity", opacidade); l.setAttribute("stroke-linecap", "round");
+    return l;
+  };
+  svg.appendChild(linha(3, "#fff", 0.85));   // halo branco (legível sobre satélite)
+  svg.appendChild(linha(1.2, "#111827", 0.75));
 }
 /* mesma lógica acima, mas mantida ativa no mapa ao vivo (não só na hora de capturar
    a prancha) — sem isso, rótulo de ponto perto de outro ficava ilegível direto na
