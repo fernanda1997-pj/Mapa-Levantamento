@@ -230,6 +230,23 @@
         </div>
       </details>
 
+      <details class="secao" id="secao-calc-dist">
+        <summary>🧮 Distância de materiais (OSP)</summary>
+        <div class="corpo">
+          <p class="dica">Abra o popup de um ponto no mapa (canteiro, pedreira, areal, cimento...)
+            e clique em <b>📏 Usar no cálculo</b> pra ir adicionando aqui — funciona mesmo com pontos
+            bem longe um do outro (ex.: uma fábrica em outra cidade), sem precisar caber tudo na
+            tela. Marque um deles como referência (⭐, geralmente o canteiro): as distâncias saem
+            dele até cada um dos outros, pela estrada de verdade.</p>
+          <div id="lista-calc-dist"></div>
+          <div class="grupo-btn" style="margin-top:8px">
+            <button class="btn secundario" onclick="calcularListaDist()">📐 Calcular distâncias</button>
+            <button class="btn secundario" onclick="limparListaDist()">🗑️ Limpar lista</button>
+          </div>
+          <div id="resultado-calc-dist" style="margin-top:10px"></div>
+        </div>
+      </details>
+
       <details class="secao" id="secao-prancha">
         <summary>🖼️ Prancha (mapa de localização)</summary>
         <div class="corpo modal" style="box-shadow:none; padding:0; max-width:none; max-height:none; overflow:visible">
@@ -783,6 +800,7 @@ function popupFixoArquivo(p){
     <div class="pop-acoes">
       <button onclick="rotaDesdeAqui(${p.lat}, ${p.lng})">${iconeRotaSvg(14)} Rota daqui</button>
       <button onclick="soEsteArquivo('${encodeURIComponent(idArq(p))}')" title="Esconder todas as outras">🎯 Só esta</button>
+      <button onclick="adicionarAoCalculoDist('${encodeURIComponent(p.nome)}', ${p.lat}, ${p.lng})" title="Adicionar à lista de cálculo de distância (OSP)">📏 Usar no cálculo</button>
     </div>`;
 }
 
@@ -1218,6 +1236,7 @@ function popupFixo(p){
       <button onclick="rotaDesdeAqui(${p.lat}, ${p.lng})">${iconeRotaSvg(14)} Rota daqui</button>
       <button onclick="abrirModalPonto('${p.id}')">✏️ Editar</button>
       <button onclick="excluirPontoFixo('${p.id}')">🗑️ Excluir</button>
+      <button onclick="adicionarAoCalculoDist('${encodeURIComponent(p.nome)}', ${p.lat}, ${p.lng})" title="Adicionar à lista de cálculo de distância (OSP)">📏 Usar no cálculo</button>
     </div>`;
 }
 
@@ -3335,6 +3354,120 @@ async function calcularKmsPrancha(coords){
   const [rlat, rlng] = refVal.split(",").map(Number);
   return calcularKmsDesde(rlat, rlng, coords);
 }
+
+/* ================= Distância de materiais (modo OSP) =================
+   lista à parte, curada à mão pelo botão "Usar no cálculo" dos popups — ao
+   contrário da COORDENADAS/prancha, NÃO depende de o ponto estar na tela
+   (uma fábrica de cimento em outra cidade não cabe no mesmo enquadramento
+   do canteiro/trecho, mas precisa entrar na conta do mesmo jeito) */
+const CHAVE_CALC_DIST = "rta_geoportal_calc_dist";
+const CHAVE_CALC_DIST_REF = "rta_geoportal_calc_dist_ref";
+let listaCalculoDist = carregar(CHAVE_CALC_DIST, []);
+let refCalculoDist = localStorage.getItem(CHAVE_CALC_DIST_REF) || null;
+function salvarListaDist(){
+  salvar(CHAVE_CALC_DIST, listaCalculoDist);
+  localStorage.setItem(CHAVE_CALC_DIST_REF, refCalculoDist || "");
+}
+function adicionarAoCalculoDist(nomeCod, lat, lng){
+  map.closePopup();
+  const nome = decodeURIComponent(nomeCod);
+  const id = novoId();
+  listaCalculoDist.push({id, nome, lat:+lat, lng:+lng});
+  if (!refCalculoDist) refCalculoDist = id; // primeiro ponto adicionado já nasce como referência
+  salvarListaDist();
+  renderizarListaDist();
+  document.getElementById("secao-calc-dist").open = true;
+  aviso(`"${nome}" adicionado à lista de cálculo de distância.`);
+}
+function definirReferenciaDist(id){
+  refCalculoDist = id;
+  salvarListaDist();
+  renderizarListaDist();
+}
+function removerDoCalculoDist(id){
+  listaCalculoDist = listaCalculoDist.filter(p => p.id !== id);
+  if (refCalculoDist === id) refCalculoDist = listaCalculoDist[0]?.id || null;
+  salvarListaDist();
+  renderizarListaDist();
+}
+function limparListaDist(){
+  listaCalculoDist = [];
+  refCalculoDist = null;
+  salvarListaDist();
+  renderizarListaDist();
+  document.getElementById("resultado-calc-dist").innerHTML = "";
+}
+function renderizarListaDist(){
+  const el = document.getElementById("lista-calc-dist");
+  if (!el) return;
+  if (!listaCalculoDist.length){
+    el.innerHTML = `<p class="dica">Nenhum ponto na lista ainda.</p>`;
+    return;
+  }
+  el.innerHTML = listaCalculoDist.map(p => `
+    <div style="display:flex; align-items:center; gap:6px; padding:4px 0; border-bottom:1px solid #eef2f7">
+      <button type="button" title="Usar como referência" onclick="definirReferenciaDist('${p.id}')"
+        style="border:none; background:none; cursor:pointer; font-size:15px; padding:0">${p.id === refCalculoDist ? "⭐" : "☆"}</button>
+      <span style="flex:1; font-size:13px">${esc(p.nome)}</span>
+      <button type="button" title="Remover" onclick="removerDoCalculoDist('${p.id}')"
+        style="border:none; background:none; cursor:pointer; color:#94A3B8; padding:0">✖</button>
+    </div>`).join("");
+}
+renderizarListaDist();
+async function calcularListaDist(){
+  const ref = listaCalculoDist.find(p => p.id === refCalculoDist);
+  if (!ref){ aviso("Marque um ponto como referência (⭐) primeiro."); return; }
+  const alvos = listaCalculoDist.filter(p => p.id !== ref.id).map(p => ({...p}));
+  if (!alvos.length){ aviso("Adicione pelo menos mais um ponto além da referência."); return; }
+  const out = document.getElementById("resultado-calc-dist");
+  out.innerHTML = `<p class="dica">Calculando pela estrada...</p>`;
+  const coords = await calcularKmsDesde(ref.lat, ref.lng, alvos);
+  const fmt = n => n.toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2});
+  const linhas = coords.map(p => {
+    if (!p.km) return `${p.nome}: sem distância pela estrada encontrada`;
+    const km = Number(String(p.km).replace(/\./g, "").replace(",", "."));
+    return `${p.nome}: ${fmt(km)} km`;
+  });
+  const texto = `Referência: ${ref.nome}\n` + linhas.join("\n");
+  out.innerHTML = `
+    <div style="font-family:monospace; font-size:12.5px; white-space:pre-wrap; background:#f8fafc; border:1px solid var(--borda); border-radius:6px; padding:8px">${esc(texto)}</div>
+    <div class="grupo-btn" style="margin-top:8px">
+      <button class="btn secundario" onclick="copiarResultadoDist()">📋 Copiar</button>
+      <button class="btn secundario" onclick="usarNaPranchaDist()">🖼️ Usar na prancha</button>
+    </div>`;
+  out.dataset.texto = texto;
+  out.dataset.refLat = ref.lat;
+  out.dataset.refLng = ref.lng;
+  out.dataset.refNome = ref.nome;
+}
+function copiarResultadoDist(){
+  const texto = document.getElementById("resultado-calc-dist").dataset.texto || "";
+  navigator.clipboard.writeText(texto)
+    .then(() => aviso("Distâncias copiadas! É só colar na planilha."))
+    .catch(() => aviso("Não consegui copiar automaticamente."));
+}
+function usarNaPranchaDist(){
+  const out = document.getElementById("resultado-calc-dist");
+  const texto = out.dataset.texto || "";
+  const refLat = out.dataset.refLat, refLng = out.dataset.refLng, refNome = out.dataset.refNome;
+  if (!texto || !refLat) return;
+  document.getElementById("secao-prancha").open = true;
+  popularCamposPrancha(); // garante os selects atualizados antes de eu mexer neles
+  const ta = document.getElementById("pr-memoria");
+  ta.value = (ta.value.trim() ? ta.value.trimEnd() + "\n" : "") + texto;
+  const sel = document.getElementById("pr-ref");
+  const val = `${refLat},${refLng}`;
+  let opt = [...sel.options].find(o => o.value === val);
+  if (!opt){
+    opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = refNome;
+    sel.appendChild(opt);
+  }
+  sel.value = val;
+  aviso("Memória de cálculo preenchida na prancha.");
+}
+
 function linhaCoordenada(p){
   return `${p.nome} (${p.lat.toFixed(6)}°, ${p.lng.toFixed(6)}°)${p.km ? ` - KM ${p.km}` : ""}`;
 }
