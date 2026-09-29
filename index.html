@@ -171,11 +171,13 @@
         ❓ Como usar o Geoportal (tutorial)</a>
 
       <details class="secao" id="secao-osp">
-        <summary>📄 Abrir OSP (Excel) e sugerir o trecho</summary>
+        <summary>📄 Abrir OSP (Excel) e montar o mapa</summary>
         <div class="corpo">
-          <p class="dica">Selecione o Excel da OSP (o mesmo modelo com REGIONAL/TRECHO Nº/TRECHO/EXTENSÃO
-            no quadro de cabeçalho). O geoportal lê esses campos e sugere qual trecho já carregado
-            bate com ela — <b>não troca nada sozinho</b>, só sugere pra você clicar no certo.</p>
+          <p class="dica">Selecione o Excel da OSP (.xlsx/.xlsm) e o geoportal faz o resto: acha o
+            trecho, traz os pontos das tabelas de coordenadas das abas de mapa, traça as rotas pela
+            estrada a partir do canteiro, calcula as distâncias, preenche a prancha e te dá a
+            planilha de volta com as distâncias preenchidas. Tudo fica editável — o trecho só é
+            escolhido sozinho quando bate com folga; se ficar apertado, você escolhe.</p>
           <input type="file" id="arquivo-osp" accept=".xlsx,.xlsm,.xls" style="display:none">
           <button class="btn" onclick="document.getElementById('arquivo-osp').click()">📄 Selecionar planilha da OSP</button>
           <div id="resultado-osp" style="margin-top:10px"></div>
@@ -1111,6 +1113,12 @@ function usarTrechoNaPrancha(idAlvo){
   const pontos = t.coords.flat();
   const [latI, lngI] = pontos[0];
   const [latF, lngF] = pontos[pontos.length - 1];
+  // trocou de trecho: tira o Início/Fim que este mesmo botão criou pro trecho anterior
+  Object.values(camadasDesenho).forEach(l => {
+    if (l instanceof L.Marker && /^(Início|Fim) Id \d+$/.test(l._nomeRTA || "")){
+      map.removeLayer(l); grupoDesenhos.removeLayer(l); delete camadasDesenho[l._idRTA];
+    }
+  });
   const criarPonto = (nome, lat, lng) => {
     const layer = L.marker([lat, lng]);
     registrarDesenho(layer, nome);
@@ -1124,33 +1132,64 @@ function usarTrechoNaPrancha(idAlvo){
   aviso("Início/Fim marcados como pontos editáveis. Ajuste nome/ícone se quiser e siga pra prancha.");
 }
 
-/* ================= Abrir OSP (Excel) e sugerir o trecho =================
-   lê o quadro de cabeçalho (REGIONAL/TRECHO Nº/TRECHO/EXTENSÃO) que já existe
-   nos modelos de Orçamento/Inventário da OSP e pontua os trechos carregados
-   pra sugerir o mais parecido — nunca troca nada sozinha, só sugere; quem
-   decide é sempre um clique em "Usar este" (chama o mesmo usarTrechoNaPrancha
-   de sempre) */
+/* ================= Abrir OSP (Excel) — faz tudo num clique =================
+   lê o cabeçalho (REGIONAL/TRECHO Nº/TRECHO/EXTENSÃO), as tabelas de coordenadas
+   das abas de mapa e o bloco "DT"; escolhe o trecho sozinho só quando a
+   correspondência é clara (senão mostra a lista pra ela escolher), importa os
+   pontos, traça as rotas pela estrada a partir do canteiro, calcula as distâncias,
+   preenche a prancha e deixa pronto um Excel da OSP com as distâncias preenchidas.
+   A prancha em si continua sendo gerada por ela (pra poder mexer em ícone/nome antes) */
+let ospArquivo = null;      // {buf, nome} — o arquivo original, pra devolver preenchido
+let paresDtOsp = [];        // bloco "DT" das abas de mapa: {aba, rotulo, cel}
+let escritasOsp = [];       // o que vai ser gravado no Excel devolvido: {aba, cel, valor, rotulo}
+let trechoOspEscolhido = null;
 document.getElementById("arquivo-osp").addEventListener("change", async ev => {
   const arq = ev.target.files[0];
   ev.target.value = "";
   if (!arq) return;
   const out = document.getElementById("resultado-osp");
-  out.innerHTML = `<p class="dica">Lendo planilha... (pode demorar alguns segundos em arquivos grandes)</p>`;
+  const etapa = txt => { out.innerHTML = `<p class="dica">${txt}</p>`; };
+  etapa("Lendo planilha... (pode demorar alguns segundos em arquivos grandes)");
   try {
     await carregarScriptExt("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js", "XLSX");
     const buf = await arq.arrayBuffer();
+    ospArquivo = {buf, nome: arq.name};
     const wb = XLSX.read(buf, {type:"array", cellFormula:false, cellHTML:false});
     const dados = extrairDadosOsp(wb);
     pontosOspLidos = extrairPontosOsp(wb);
+    paresDtOsp = extrairParesDtOsp(wb);
+    escritasOsp = [];
+    trechoOspEscolhido = null;
     if (!dados && !pontosOspLidos.length){
-      out.innerHTML = `<p class="dica">Não achei nem o quadro (REGIONAL/TRECHO Nº/TRECHO/EXTENSÃO) nem
-        tabelas de coordenadas (Coordenadas / Lat. / Long.) nesta planilha. Pode escolher o trecho
-        manualmente em 📌 Pontos fixos → Trechos.</p>`;
+      etapa(`Não achei nem o quadro (REGIONAL/TRECHO Nº/TRECHO/EXTENSÃO) nem tabelas de coordenadas
+        (Coordenadas / Lat. / Long.) nesta planilha. Pode escolher o trecho manualmente em
+        📌 Pontos fixos → Trechos.`);
       return;
     }
-    mostrarCandidatosOsp(dados, dados ? acharTrechosCandidatosOsp(dados) : []);
+    const candidatos = dados ? acharTrechosCandidatosOsp(dados) : [];
+    // só escolhe sozinho com folga clara sobre o 2º colocado — empate = ela decide
+    const [c1, c2] = candidatos;
+    if (c1 && (!c2 || c1.pontos - c2.pontos >= 2)){
+      trechoOspEscolhido = c1.t.id;
+      usarTrechoNaPrancha(c1.t.id);
+    }
+    mostrarCandidatosOsp(dados, candidatos);
+    if (!pontosOspLidos.length) return;
+    const resumo = document.getElementById("resumo-osp");
+    const status = txt => { resumo.innerHTML = `<p class="dica">⏳ ${txt}</p>`; };
+    importarPontosOsp(true);
+    status("Traçando as rotas pela estrada a partir do canteiro...");
+    const rotas = await tracarRotasOsp();
+    status("Calculando as distâncias...");
+    await calcularListaDist();
+    document.getElementById("pr-memoria").value = ""; // OSP nova: memória de cálculo começa do zero
+    usarNaPranchaDist();
+    status("Calculando o bloco DT da planilha...");
+    await montarEscritasOsp();
+    enquadrarResultadoOsp();
+    mostrarResumoOsp(rotas);
   } catch (e){
-    out.innerHTML = `<p class="dica">Não consegui ler essa planilha: ${esc(e.message || String(e))}</p>`;
+    etapa(`Não consegui ler essa planilha: ${esc(e.message || String(e))}`);
   }
 });
 function extrairDadosOsp(wb){
@@ -1227,9 +1266,12 @@ function mostrarCandidatosOsp(dados, candidatos){
       Trecho Nº ${esc(dados.trechoNum || "?")}${dados.extensao ? " · " + fmtKm(dados.extensao) + " km" : ""}<br>
       <i>${esc(dados.trechoNome || "(sem descrição de trecho na planilha)")}</i></p>`;
     html += candidatos.length
-      ? `<p class="dica"><b>1) Trechos parecidos — clique no certo:</b></p>` + candidatos.map(c => `
-        <div style="display:flex; align-items:center; gap:6px; padding:5px 0; border-bottom:1px solid #eef2f7">
-          <span style="flex:1; font-size:12.5px">Id ${c.t.id} — ${esc(c.t.nome)} (${fmtKm(c.t.extensao_km)} km)</span>
+      ? `<p class="dica"><b>1) Trecho:</b> ${trechoOspEscolhido != null
+          ? "escolhi o de cima sozinho (bateu com folga). Se não for esse, clique em outro."
+          : "ficou apertado entre esses — clique no certo:"}</p>` + candidatos.map(c => `
+        <div style="display:flex; align-items:center; gap:6px; padding:5px 0; border-bottom:1px solid #eef2f7;
+          ${c.t.id === trechoOspEscolhido ? "background:#ECFDF5;" : ""}">
+          <span style="flex:1; font-size:12.5px">${c.t.id === trechoOspEscolhido ? "✅ " : ""}Id ${c.t.id} — ${esc(c.t.nome)} (${fmtKm(c.t.extensao_km)} km)</span>
           <button class="btn secundario" style="width:auto; padding:5px 10px; font-size:12px"
             onclick="usarTrechoNaPrancha(${c.t.id})">Usar este</button>
         </div>`).join("")
@@ -1246,7 +1288,8 @@ function mostrarCandidatosOsp(dados, candidatos){
       abas.map(aba => {
         const doAba = pontosOspLidos.filter(p => p.aba === aba);
         return `<label style="display:flex; align-items:center; gap:6px; font-weight:700; font-size:12.5px; margin:6px 0 2px">
-            <input type="checkbox" class="chk-aba-osp" value="${esc(aba)}" checked> Aba "${esc(aba)}" (${doAba.length})</label>` +
+            <input type="checkbox" class="chk-aba-osp" value="${esc(aba)}"
+              ${doAba.some(p => p.tabelaDeDistancia) ? "checked" : ""}> Aba "${esc(aba)}" (${doAba.length})</label>` +
           doAba.map(p => {
             const cat = categoriaPontoOsp(p.nome);
             return `<div style="font-size:12px; padding:2px 0 2px 22px; border-bottom:1px solid #eef2f7">
@@ -1255,12 +1298,26 @@ function mostrarCandidatosOsp(dados, candidatos){
                 p.distPlanilha != null ? ` · na planilha: ${fmtKm(p.distPlanilha)} km` : ""}</span></div>`;
           }).join("");
       }).join("") + `</div>
-      <button class="btn" style="margin-top:8px" onclick="importarPontosOsp()">📍 Importar os pontos marcados pro mapa</button>
-      <p class="dica" style="margin-top:6px">Entram como pontos normais do Levantamento (editáveis:
-        nome, ícone, posição). Os pontos de material/obra já vão pra lista de
-        <b>🧮 Distância de materiais</b> com o canteiro como referência — é só clicar em Calcular.</p>`;
+      <button class="btn secundario" style="margin-top:8px" onclick="reprocessarAbasOsp()">🔄 Refazer com as abas marcadas</button>
+      <p class="dica" style="margin-top:6px">Os pontos entram como pontos normais do Levantamento
+        (editáveis: nome, ícone, posição). Por padrão vêm só as abas com coluna de distância
+        (ex.: MAPA, MAPA - BIDIM); marque outra (ex.: MAPA-DRENAGEM) e clique em Refazer se quiser.</p>`;
   }
+  html += `<div id="resumo-osp"></div>`;
   out.innerHTML = html;
+}
+/* refaz importação/rotas/distâncias com as abas que ela marcou (não relê o arquivo) */
+async function reprocessarAbasOsp(){
+  const resumo = document.getElementById("resumo-osp");
+  resumo.innerHTML = `<p class="dica">Refazendo...</p>`;
+  importarPontosOsp(true);
+  const rotas = await tracarRotasOsp();
+  await calcularListaDist();
+  document.getElementById("pr-memoria").value = "";
+  usarNaPranchaDist();
+  await montarEscritasOsp();
+  enquadrarResultadoOsp();
+  mostrarResumoOsp(rotas);
 }
 /* lê as tabelas "Coordenadas: | Lat. | Long. | (Distância do canteiro)" das abas de
    mapa da OSP (MAPA, MAPA-DRENAGEM, MAPA - BIDIM...). Tolera o jeito que vem digitado
@@ -1274,15 +1331,27 @@ function extrairPontosOsp(wb){
     const n = parseFloat(String(v ?? "").replace(/[°º\s]/g, "").replace(",", "."));
     return isNaN(n) ? null : n;
   };
-  const pontos = [], vistos = new Set();
+  const pontos = [], porChave = new Map();
   wb.SheetNames.forEach(nomeAba => {
-    const linhas = XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], {header:1, defval:null, raw:true});
+    const ws = wb.Sheets[nomeAba];
+    if (!ws["!ref"]) return;
+    const ini = XLSX.utils.decode_range(ws["!ref"]).s; // linhas/colunas do sheet_to_json começam aqui
+    const linhas = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true, blankrows:true});
     linhas.forEach((linha, r) => {
       if (!Array.isArray(linha)) return;
       linha.forEach((cel, c) => {
         if (!norm(cel).startsWith("COORDENADA")) return;
         if (!norm(linha[c + 1]).startsWith("LAT") || !norm(linha[c + 2]).startsWith("LONG")) return;
         const temDist = norm(linha[c + 3]).startsWith("DIST");
+        // coluna dos valores de distância: em algumas abas fica uma coluna depois do
+        // cabeçalho (célula mesclada) — usa a coluna onde a tabela já tem mais números
+        let offTabela = 3;
+        if (temDist){
+          const cont = {3:0, 4:0, 5:0};
+          for (let i = r + 1; i < Math.min(linhas.length, r + 40); i++)
+            [3, 4, 5].forEach(o => { if (typeof (linhas[i] || [])[c + o] === "number") cont[o]++; });
+          offTabela = [4, 5].reduce((a, b) => cont[b] > cont[a] ? b : a, 3);
+        }
         let vazias = 0;
         for (let i = r + 1; i < linhas.length && vazias < 2; i++){
           const l = linhas[i] || [];
@@ -1292,16 +1361,53 @@ function extrairPontosOsp(wb){
           if (lat == null || lng == null) break; // acabou a tabela (ex.: bloco "DT" logo abaixo)
           vazias = 0;
           if (lat < -35 || lat > 6 || lng < -75 || lng > -30) continue; // fora do Brasil = digitado errado
+          let celDist = null, distPlanilha = null;
+          if (temDist){
+            celDist = XLSX.utils.encode_cell({r: ini.r + i, c: ini.c + c + offTabela});
+            distPlanilha = typeof l[c + offTabela] === "number" ? l[c + offTabela] : null;
+          }
           const chave = `${nome.toUpperCase()}|${lat.toFixed(5)}|${lng.toFixed(5)}`;
-          if (vistos.has(chave)) continue; // o mesmo canteiro se repete em MAPA e MAPA - BIDIM
-          vistos.add(chave);
-          const distPlanilha = temDist ? ([l[c + 3], l[c + 4], l[c + 5]].find(v => typeof v === "number") ?? null) : null;
-          pontos.push({nome, lat, lng, aba:nomeAba, distPlanilha, tabelaDeDistancia:temDist});
+          const existente = porChave.get(chave);
+          if (existente){ // o mesmo canteiro se repete em MAPA e MAPA - BIDIM: um ponto só, várias células
+            if (celDist) existente.celulas.push({aba:nomeAba, cel:celDist});
+            existente.tabelaDeDistancia ||= temDist;
+            continue;
+          }
+          const p = {nome, lat, lng, aba:nomeAba, distPlanilha, tabelaDeDistancia:temDist,
+                     celulas: celDist ? [{aba:nomeAba, cel:celDist}] : []};
+          porChave.set(chave, p);
+          pontos.push(p);
         }
       });
     });
   });
   return pontos;
+}
+/* bloco "DT" das abas de mapa (ex.: "Canteiro - Bueiro | 69,2") — pares de pontos
+   cuja distância a planilha quer; a célula do valor fica logo à direita do rótulo */
+function extrairParesDtOsp(wb){
+  const pares = [];
+  wb.SheetNames.filter(n => /^MAPA/i.test(n.trim())).forEach(nomeAba => {
+    const ws = wb.Sheets[nomeAba];
+    if (!ws["!ref"]) return;
+    const ini = XLSX.utils.decode_range(ws["!ref"]).s;
+    const linhas = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true, blankrows:true});
+    linhas.forEach((linha, r) => {
+      (linha || []).forEach((cel, c) => {
+        if (String(cel ?? "").trim().toUpperCase() !== "DT") return;
+        let vazias = 0;
+        for (let i = r + 1; i < linhas.length && vazias < 2; i++){
+          const rotulo = String((linhas[i] || [])[c] ?? "").trim();
+          if (!rotulo){ vazias++; continue; }
+          vazias = 0;
+          if (!/\s-\s/.test(rotulo)) break;
+          pares.push({aba:nomeAba, rotulo, cel: XLSX.utils.encode_cell({r: ini.r + i, c: ini.c + c + 1}),
+                      valorPlanilha: typeof linhas[i][c + 1] === "number" ? linhas[i][c + 1] : null});
+        }
+      });
+    });
+  });
+  return pares;
 }
 function categoriaPontoOsp(nome){
   const n = String(nome).toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -1315,9 +1421,12 @@ function categoriaPontoOsp(nome){
   if (/OBRA|BUEIRO|EROS/.test(n)) return {icone:"🚧", cor:"#EA580C"};
   return null;
 }
-function importarPontosOsp(){
+function pontosOspEscolhidos(){
   const abasMarcadas = new Set([...document.querySelectorAll(".chk-aba-osp:checked")].map(c => c.value));
-  const escolhidos = pontosOspLidos.filter(p => abasMarcadas.has(p.aba));
+  return pontosOspLidos.filter(p => abasMarcadas.has(p.aba));
+}
+function importarPontosOsp(automatico){
+  const escolhidos = pontosOspEscolhidos();
   if (!escolhidos.length){ aviso("Marque pelo menos uma aba pra importar."); return; }
   const jaTem = new Set(Object.values(camadasDesenho).filter(l => l instanceof L.Marker)
     .map(l => `${(l._nomeRTA || "").toUpperCase()}|${l.getLatLng().lat.toFixed(5)}|${l.getLatLng().lng.toFixed(5)}`));
@@ -1341,14 +1450,204 @@ function importarPontosOsp(){
   renderizarListaDist();
   document.getElementById("resultado-calc-dist").innerHTML = "";
   document.getElementById("secao-calc-dist").open = true;
-  // enquadra a área da obra: tira do zoom os pontos muito longe da mediana (ex.: fornecedor
-  // em Palmas a 370 km) — eles continuam no mapa e na lista de distância, só não entram no enquadramento
+  if (automatico) return; // o fluxo de um clique enquadra e avisa no fim, depois das rotas
+  enquadrarResultadoOsp();
+  aviso(`${novos} ponto(s) importado(s)${novos < escolhidos.length ? " (os repetidos foram pulados)" : ""}. ` +
+        `Lista de distância pronta${canteiro ? `, referência: ${canteiro.nome}` : ""}.`);
+}
+/* enquadra a área da obra (+ o trecho escolhido): tira do zoom os pontos muito longe da
+   mediana (ex.: fornecedor em Palmas a 370 km) — eles continuam no mapa e na lista, só
+   não entram no enquadramento */
+function enquadrarResultadoOsp(){
+  const escolhidos = pontosOspEscolhidos();
+  if (!escolhidos.length) return;
   const mediana = arr => { const s = [...arr].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
   const centro = L.latLng(mediana(escolhidos.map(p => p.lat)), mediana(escolhidos.map(p => p.lng)));
   const pertos = escolhidos.filter(p => map.distance(centro, [p.lat, p.lng]) <= 150000);
-  map.fitBounds(L.latLngBounds((pertos.length ? pertos : escolhidos).map(p => [p.lat, p.lng])), {padding:[40, 40]});
-  aviso(`${novos} ponto(s) importado(s)${novos < escolhidos.length ? " (os repetidos foram pulados)" : ""}. ` +
-        `Lista de distância pronta${canteiro ? `, referência: ${canteiro.nome}` : ""}.`);
+  const b = L.latLngBounds((pertos.length ? pertos : escolhidos).map(p => [p.lat, p.lng]));
+  const cam = trechoOspEscolhido != null ? camadasTrechos[trechoOspEscolhido] : null;
+  if (cam) b.extend(cam.getBounds());
+  map.fitBounds(b, {padding:[40, 40]});
+}
+/* rota pela estrada (OSRM) do canteiro/referência até cada ponto da lista de distância,
+   registrada como rota normal do levantamento (mesmo formato de uma traçada à mão:
+   extensão, pernas e waypoints) — com isso o cálculo de distância segue a própria rota */
+async function tracarRotasOsp(){
+  const ref = listaCalculoDist.find(p => p.id === refCalculoDist);
+  if (!ref) return {feitas:0, falhas:[]};
+  const existentes = new Set(Object.values(camadasDesenho).filter(l => !(l instanceof L.Marker)).map(l => l._nomeRTA));
+  let feitas = 0;
+  const falhas = [];
+  for (const p of listaCalculoDist){
+    if (p.id === ref.id) continue;
+    const nome = `${ref.nome} - ${p.nome}`.toUpperCase();
+    if (existentes.has(nome)){ feitas++; continue; }
+    try {
+      const coords = `${ref.lng.toFixed(6)},${ref.lat.toFixed(6)};${p.lng.toFixed(6)},${p.lat.toFixed(6)}`;
+      const resp = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false`);
+      const j = await resp.json();
+      if (j.code !== "Ok" || !j.routes?.length) throw new Error(j.message || "sem rota");
+      const geom = j.routes[0].geometry;
+      // a rota do OSRM sai/chega no ponto da estrada mais próximo: emenda nos pontos de verdade,
+      // senão a rede de rotas não "encosta" no canteiro/obra e o cálculo cai no OSRM de novo.
+      // A emenda entra na extensão da rota, pra rota no mapa, memória e planilha darem o mesmo número
+      const [lng0, lat0] = geom.coordinates[0];
+      const [lng1, lat1] = geom.coordinates[geom.coordinates.length - 1];
+      const emendas = map.distance([ref.lat, ref.lng], [lat0, lng0]) + map.distance([lat1, lng1], [p.lat, p.lng]);
+      geom.coordinates.unshift([ref.lng, ref.lat]);
+      geom.coordinates.push([p.lng, p.lat]);
+      const linha = L.geoJSON(geom).getLayers()[0];
+      linha._legsRTA = [j.routes[0].distance + emendas];
+      linha._waypointsRTA = [[+ref.lat.toFixed(6), +ref.lng.toFixed(6)], [+p.lat.toFixed(6), +p.lng.toFixed(6)]];
+      registrarDesenho(linha, nome);
+      feitas++;
+    } catch (e){
+      falhas.push(`${nome} (${e.message || e})`);
+    }
+  }
+  salvarDesenhos();
+  return {feitas, falhas};
+}
+/* o que vai pro Excel devolvido: a coluna "Distância do canteiro (km)" das tabelas de
+   coordenadas (menos a linha do próprio canteiro, que na planilha guarda outra coisa)
+   e os pares do bloco "DT" cujos dois lados dão pra reconhecer sem ambiguidade */
+async function montarEscritasOsp(){
+  escritasOsp = [];
+  const out = document.getElementById("resultado-calc-dist");
+  const ref = listaCalculoDist.find(p => p.id === refCalculoDist);
+  const parseKm = s => Number(String(s).replace(/\./g, "").replace(",", "."));
+  const kmPorNome = new Map();
+  (out.dataset.texto || "").split("\n").forEach(l => {
+    const m = l.match(/^(.*): ([\d.,]+) km$/);
+    if (m) kmPorNome.set(m[1], parseKm(m[2]));
+  });
+  const chave = p => `${p.nome.toUpperCase()}|${p.lat.toFixed(5)}|${p.lng.toFixed(5)}`;
+  const chaveRef = ref ? chave(ref) : null;
+  pontosOspEscolhidos().forEach(p => {
+    if (chave(p) === chaveRef || !kmPorNome.has(p.nome)) return;
+    p.celulas.forEach(({aba, cel}) => escritasOsp.push({aba, cel, valor: +kmPorNome.get(p.nome).toFixed(2), rotulo: p.nome}));
+  });
+  const semAcento = s => String(s).toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  const resolver = lado => {
+    const alvo = semAcento(lado);
+    const achados = pontosOspLidos.filter(p => {
+      const n = semAcento(p.nome);
+      return n === alvo || n.startsWith(alvo + " ") || n.startsWith(alvo + "(") || n.split(/\s+/)[0] === alvo;
+    });
+    if (!achados.length) return null;
+    // "Obra" e "Obra (Erosão)" a 3 m uma da outra contam como o mesmo lugar
+    return achados.every(p => map.distance([p.lat, p.lng], [achados[0].lat, achados[0].lng]) < 200) ? achados[0] : null;
+  };
+  paresDtOsp.forEach(par => { par.pulado = null; par.valor = null; });
+  for (const par of paresDtOsp){
+    const [a, b] = par.rotulo.split(/\s-\s/).map(resolver);
+    if (!a || !b){ par.pulado = "não reconheci os dois pontos"; continue; }
+    // um dos lados é o próprio canteiro de referência: usa a mesma distância da lista (a da
+    // rota desenhada), pra planilha não ficar com dois números pro mesmo par
+    const outro = chaveRef && chave(a) === chaveRef ? b : chaveRef && chave(b) === chaveRef ? a : null;
+    if (outro && kmPorNome.has(outro.nome)){
+      par.valor = +kmPorNome.get(outro.nome).toFixed(2);
+    } else {
+      const alvo = {nome:b.nome, lat:b.lat, lng:b.lng};
+      try { await calcularKmsOsrmLote(a.lat, a.lng, [alvo]); } catch (e){ par.pulado = "sem rota"; continue; }
+      if (!alvo.km){ par.pulado = "sem rota"; continue; }
+      par.valor = +parseKm(alvo.km).toFixed(2);
+    }
+    escritasOsp.push({aba:par.aba, cel:par.cel, valor:par.valor, rotulo:`DT ${par.rotulo}`});
+  }
+}
+function mostrarResumoOsp(rotas){
+  const el = document.getElementById("resumo-osp");
+  if (!el) return;
+  const fmt = n => n.toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2});
+  const texto = document.getElementById("resultado-calc-dist").dataset.texto || "";
+  const pulados = paresDtOsp.filter(p => p.pulado);
+  el.innerHTML = `
+    <div style="margin-top:10px; padding:8px; border:1px solid #A7F3D0; background:#ECFDF5; border-radius:6px">
+      <p class="dica" style="margin:0 0 6px"><b>✅ Pronto.</b> ${rotas.feitas} rota(s) traçada(s) a partir do
+        canteiro${rotas.falhas.length ? ` · ${rotas.falhas.length} sem rota: ${esc(rotas.falhas.join("; "))}` : ""}.</p>
+      <div style="font-family:monospace; font-size:12px; white-space:pre-wrap">${esc(texto)}${
+        paresDtOsp.filter(p => p.valor != null).map(p => `\nDT ${p.rotulo}: ${fmt(p.valor)} km${
+          p.valorPlanilha != null ? ` (planilha: ${fmt(p.valorPlanilha)})` : ""}`).join("")}</div>
+      ${pulados.length ? `<p class="dica" style="margin:6px 0 0">Não preenchi: ${esc(pulados.map(p => `DT ${p.rotulo} (${p.pulado})`).join("; "))}.</p>` : ""}
+      <button class="btn" style="margin-top:8px" onclick="baixarOspComDistancias()"
+        ${escritasOsp.length ? "" : "disabled"}>⬇️ Baixar a planilha com as distâncias (${escritasOsp.length} célula(s))</button>
+      <p class="dica" style="margin:6px 0 0">A prancha já está com título, referência e memória de cálculo
+        preenchidos — confira ícones/nomes no mapa e clique em <b>👁️ Pré-visualizar</b> na seção Prancha.</p>
+    </div>`;
+}
+/* devolve o próprio arquivo da OSP com as distâncias gravadas nas células — mexe só no
+   XML das abas envolvidas (via JSZip), então formatação, imagens e fórmulas do resto da
+   planilha ficam intactas. Célula com fórmula nunca é sobrescrita */
+async function baixarOspComDistancias(){
+  if (!ospArquivo || !escritasOsp.length) return;
+  try {
+    await carregarScriptExt("https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js", "JSZip");
+    const zip = await JSZip.loadAsync(ospArquivo.buf);
+    const parser = new DOMParser();
+    const wbXml = parser.parseFromString(await zip.file("xl/workbook.xml").async("string"), "application/xml");
+    const relsXml = parser.parseFromString(await zip.file("xl/_rels/workbook.xml.rels").async("string"), "application/xml");
+    const NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    const caminhoAba = nome => {
+      const sh = [...wbXml.getElementsByTagName("sheet")].find(s => s.getAttribute("name") === nome);
+      if (!sh) return null;
+      const rid = sh.getAttributeNS(NS_REL, "id") || sh.getAttribute("r:id");
+      const rel = [...relsXml.getElementsByTagName("Relationship")].find(r => r.getAttribute("Id") === rid);
+      if (!rel) return null;
+      const t = rel.getAttribute("Target");
+      return t.startsWith("/") ? t.slice(1) : "xl/" + t.replace(/^\.\//, "");
+    };
+    const porAba = {};
+    escritasOsp.forEach(w => (porAba[w.aba] ||= []).push(w));
+    const feitas = [], puladas = [];
+    for (const [aba, lista] of Object.entries(porAba)){
+      const caminho = caminhoAba(aba);
+      const arq = caminho && zip.file(caminho);
+      if (!arq){ lista.forEach(w => puladas.push(`${w.rotulo} (aba não encontrada)`)); continue; }
+      const xml = await arq.async("string");
+      const doc = parser.parseFromString(xml, "application/xml");
+      const NS = doc.documentElement.namespaceURI;
+      const sheetData = doc.getElementsByTagName("sheetData")[0];
+      for (const w of lista){
+        const {c} = XLSX.utils.decode_cell(w.cel);
+        const numLinha = XLSX.utils.decode_cell(w.cel).r + 1;
+        const linhas = [...sheetData.getElementsByTagName("row")];
+        let row = linhas.find(x => +x.getAttribute("r") === numLinha);
+        if (!row){
+          row = doc.createElementNS(NS, "row");
+          row.setAttribute("r", numLinha);
+          sheetData.insertBefore(row, linhas.find(x => +x.getAttribute("r") > numLinha) || null);
+        }
+        row.removeAttribute("spans"); // dica de otimização opcional; fica errada se a linha ganhar célula
+        const celulas = [...row.getElementsByTagName("c")];
+        let cel = celulas.find(x => x.getAttribute("r") === w.cel);
+        if (cel && cel.getElementsByTagName("f").length){ puladas.push(`${w.rotulo} (${aba}!${w.cel} tem fórmula)`); continue; }
+        if (!cel){
+          cel = doc.createElementNS(NS, "c");
+          cel.setAttribute("r", w.cel);
+          row.insertBefore(cel, celulas.find(x => XLSX.utils.decode_cell(x.getAttribute("r")).c > c) || null);
+        }
+        cel.removeAttribute("t");
+        while (cel.firstChild) cel.removeChild(cel.firstChild);
+        const v = doc.createElementNS(NS, "v");
+        v.textContent = String(w.valor);
+        cel.appendChild(v);
+        feitas.push(w);
+      }
+      let novoXml = new XMLSerializer().serializeToString(doc);
+      if (!novoXml.startsWith("<?xml")) novoXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + novoXml;
+      zip.file(caminho, novoXml, {createFolders:false}); // sem entradas de pasta que o original não tinha
+    }
+    const blob = await zip.generateAsync({type:"blob", compression:"DEFLATE"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = ospArquivo.nome.replace(/(\.xls[xm]?)$/i, " - COM DISTANCIAS$1");
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    aviso(`Planilha baixada: ${feitas.length} célula(s) preenchida(s)${puladas.length ? `, ${puladas.length} pulada(s): ${puladas.join("; ")}` : ""}.`);
+  } catch (e){
+    aviso("Não consegui gerar a planilha: " + (e.message || e));
+  }
 }
 function renderizarTrechos(){
   Object.values(camadasTrechos).forEach(l => map.removeLayer(l));
