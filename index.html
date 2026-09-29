@@ -1187,10 +1187,12 @@ document.getElementById("arquivo-osp").addEventListener("change", async ev => {
       trechoOspEscolhido = c1.t.id;
       usarTrechoNaPrancha(c1.t.id);
     }
-    // por padrão só as abas com coluna de distância (MAPA, MAPA - BIDIM...); a de drenagem,
-    // com 17 pontos de meio-fio, polui o mapa geral — ela marca se quiser
-    const abas = new Set(pontosOspLidos.filter(p => p.tabelaDeDistancia).map(p => p.aba));
-    ospEstado = {dados, candidatos, abas, passo: "pontos", rotas: null, distancias: []};
+    // por padrão: abas com coluna de distância ou com bloco de DT (MAPA, MAPA - BIDIM, Mapa...),
+    // menos as que parecem ser de outra OSP; a de drenagem (17 pontos de meio-fio) polui o mapa geral
+    const suspeitas = abasSuspeitasOsp();
+    const abas = new Set([...pontosOspLidos.filter(p => p.tabelaDeDistancia).flatMap(p => [...p.abas]),
+                          ...paresDtOsp.map(p => p.aba)].filter(a => !suspeitas.has(a)));
+    ospEstado = {dados, candidatos, abas, suspeitas, passo: "pontos", rotas: null, distancias: []};
     renderizarPainelOsp();
     await processarPontosOsp();
   } catch (e){
@@ -1205,18 +1207,82 @@ async function processarPontosOsp(){
   }
   importarPontosOsp(true);
   s.passo = "rotas"; renderizarPainelOsp();
-  s.rotas = await tracarRotasOsp();
-  s.passo = "distancias"; renderizarPainelOsp();
-  await calcularListaDist();
-  document.getElementById("pr-memoria").value = ""; // OSP nova: memória de cálculo começa do zero
-  usarNaPranchaDist();
-  await montarEscritasOsp();
+  s.rotas = await tracarRotasOsp(planejarRotasOsp());
+  await calcularDistanciasOsp();
   enquadrarResultadoOsp();
+}
+/* distâncias a partir das rotas que estão no mapa agora — usado no fim do fluxo e no
+   "Recalcular" depois que ela ajusta uma rota na mão */
+async function calcularDistanciasOsp(){
+  const s = ospEstado;
+  s.passo = "distancias"; renderizarPainelOsp();
+  document.getElementById("pr-memoria").value = ""; // OSP nova: memória de cálculo começa do zero
+  if (listaCalculoDist.length > 1){
+    await calcularListaDist();
+    usarNaPranchaDist();
+  }
+  await montarEscritasOsp();
   s.passo = "pronto"; renderizarPainelOsp();
+}
+const mesmoLugarOsp = (a, b) => map.distance([a.lat, a.lng], [b.lat, b.lng]) < 200;
+/* lado de um par do DT ("PEDREIRA", "BSTC", "Canteiro") -> ponto lido; procura primeiro
+   na própria aba do par, depois nas abas marcadas. Nome exato ganha; senão palavra do nome
+   ("BSTC" acha "Erosão / BSTC"). Achou mais de um lugar diferente = ambíguo, não chuta */
+function resolverLadoOsp(lado, aba){
+  const semAcento = s => String(s).toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
+  const alvo = semAcento(lado);
+  const palavras = s => semAcento(s).split(/[^A-Z0-9]+/).filter(Boolean);
+  const candidatos = [pontosOspLidos.filter(p => p.abas.has(aba)), pontosOspEscolhidos()];
+  for (const lista of candidatos){
+    const exatos = lista.filter(p => semAcento(p.nome) === alvo);
+    const achados = exatos.length ? exatos : lista.filter(p => {
+      const w = palavras(p.nome);
+      return palavras(lado).every(x => w.includes(x));
+    });
+    if (!achados.length) continue;
+    return achados.every(p => mesmoLugarOsp(p, achados[0])) ? achados[0] : null;
+  }
+  return null;
+}
+/* rotas a traçar: do canteiro até cada ponto da lista de distância (modelo com coluna
+   "Distância do canteiro") + um trajeto por par do DT (PEDREIRA X BSTC...), sem repetir */
+function planejarRotasOsp(){
+  const planos = [];
+  const ref = listaCalculoDist.find(p => p.id === refCalculoDist);
+  if (ref && listaCalculoDist.length > 1)
+    listaCalculoDist.forEach(p => { if (p.id !== ref.id) planos.push({de:ref, para:p, nome:`${ref.nome} - ${p.nome}`.toUpperCase()}); });
+  paresDtOsp.forEach(par => {
+    par.rota = null; par.app = null;
+    par.pulado = null;
+    if (!ospEstado.abas.has(par.aba)) return;
+    const a = resolverLadoOsp(par.lados[0], par.aba), b = resolverLadoOsp(par.lados[1], par.aba);
+    if (!a || !b){ par.pulado = "não achei esse ponto nas tabelas de coordenadas"; return; }
+    const igual = planos.find(x => (mesmoLugarOsp(x.de, a) && mesmoLugarOsp(x.para, b)) || (mesmoLugarOsp(x.de, b) && mesmoLugarOsp(x.para, a)));
+    if (igual){ par.rota = igual.nome; return; }
+    const nome = par.rotulo.toUpperCase();
+    planos.push({de:a, para:b, nome});
+    par.rota = nome;
+  });
+  return planos;
+}
+const rotaPorNomeOsp = nome => Object.values(camadasDesenho).find(l => !(l instanceof L.Marker) && l._nomeRTA === nome);
+function comprimentoRotaM(l){
+  if (l._medidaManualRTA) return l._medidaManualRTA; // ela digitou a distância na mão
+  if (l._legsRTA?.length) return l._legsRTA.reduce((a, b) => a + b, 0);
+  const lls = l.getLatLngs();
+  return distanciaMetros(Array.isArray(lls[0]) ? lls.flat() : lls);
+}
+function ajustarRotaOsp(nomeCod){
+  const l = rotaPorNomeOsp(decodeURIComponent(nomeCod));
+  if (!l){ aviso("Não achei essa rota no mapa."); return; }
+  document.getElementById("painel").classList.remove("aberto"); // celular: libera o mapa
+  reabrirRota(l._idRTA);
+  aviso("Arraste/adicione pontos pra rota passar pelo caminho certo e conclua. Depois clique em 🔄 Recalcular no painel da OSP.");
 }
 function escolherTrechoOsp(id){
   trechoOspEscolhido = id;
   usarTrechoNaPrancha(id);
+  ospEstado.suspeitas = abasSuspeitasOsp(); // o que é "longe do trecho" muda com o trecho
   enquadrarResultadoOsp();
   renderizarPainelOsp();
 }
@@ -1274,12 +1340,18 @@ function acharTrechosCandidatosOsp(dados){
   const semAcento = s => String(s ?? "").toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   const palavras = s => new Set(semAcento(s).replace(/[^A-Z0-9]+/g, " ").trim().split(" ").filter(w => w.length > 2));
   const alvoPalavras = palavras(dados.trechoNome);
-  const rodoviaMatch = semAcento(dados.trechoNome).match(/TO-?\s?\d+/);
-  const rodoviaAlvo = rodoviaMatch ? rodoviaMatch[0].replace(/\s/g, "").replace("TO", "TO-") : null;
+  const soRodovia = s => { const m = semAcento(s).match(/TO\s*-?\s*(\d+)/); return m ? "TO-" + m[1] : null; };
+  const rodoviaAlvo = soRodovia(dados.trechoNome);
+  const nomeAlvo = semAcento(dados.trechoNome).replace(/[^A-Z0-9]+/g, " ").trim();
+  const numAlvo = parseInt(dados.trechoNum, 10);
   return trechosArquivo.map(t => {
     let pontos = 0;
+    // nome idêntico e Id = Trecho Nº são as provas mais fortes (o Id do shapefile é o nº
+    // do trecho da AGETO); a regional da capa às vezes vem desatualizada no modelo copiado
+    if (nomeAlvo && semAcento(t.nome).replace(/[^A-Z0-9]+/g, " ").trim() === nomeAlvo) pontos += 6;
+    if (!isNaN(numAlvo) && t.id === numAlvo) pontos += 4;
     if (dados.regional != null && t.regiao === dados.regional) pontos += 3;
-    if (rodoviaAlvo && (t.rodovia || "").replace(/\s/g, "").toUpperCase() === rodoviaAlvo) pontos += 3;
+    if (rodoviaAlvo && soRodovia(t.rodovia || "") === rodoviaAlvo) pontos += 3;
     const tPalavras = palavras(t.nome);
     alvoPalavras.forEach(w => { if (tPalavras.has(w)) pontos += 1; });
     if (dados.extensao && t.extensao_km){
@@ -1322,49 +1394,73 @@ function renderizarPainelOsp(){
     </div>`;
   // 2. pontos (com escolha de abas escondida)
   if (pontosOspLidos.length){
-    const abas = [...new Set(pontosOspLidos.map(p => p.aba))];
+    const abas = [...new Set(pontosOspLidos.flatMap(p => [...p.abas]))];
     const escolhidos = pontosOspEscolhidos();
+    const suspeitas = [...(s.suspeitas || [])];
     h += `<div class="osp-passo">
         <div class="tit">${escolhidos.length ? icone("pontos") : "▫️"} 2. Pontos da planilha</div>
         <div class="txt">${escolhidos.length
           ? `${escolhidos.length} ponto(s) — ${escolhidos.slice(0, 5).map(p => esc(p.nome)).join(", ")}${
               escolhidos.length > 5 ? ` e mais ${escolhidos.length - 5}` : ""}`
           : "Nenhuma aba marcada."}</div>
+        ${suspeitas.length ? `<div class="txt" style="color:#B45309">⚠️ Deixei de fora ${suspeitas.map(a => `a aba "${esc(a)}"`).join(" e ")}:
+          a obra dela fica longe deste trecho — parece copiada de outra OSP.</div>` : ""}
         <details><summary>escolher abas (${abas.length})</summary>` +
         abas.map(aba => {
-          const n = pontosOspLidos.filter(p => p.aba === aba).length;
+          const n = pontosOspLidos.filter(p => p.abas.has(aba)).length;
           return `<label class="osp-linha" style="cursor:pointer">
               <span><input type="checkbox" ${s.abas.has(aba) ? "checked" : ""}
-                onchange="marcarAbaOsp('${encodeURIComponent(aba)}', this.checked)"> ${esc(aba)} (${n})</span></label>`;
+                onchange="marcarAbaOsp('${encodeURIComponent(aba)}', this.checked)"> ${esc(aba)} (${n})${
+                (s.suspeitas || new Set()).has(aba) ? ' <span style="color:#B45309">⚠️ longe do trecho</span>' : ""}</span></label>`;
         }).join("") + `
           <button class="btn secundario osp-mini" style="margin-top:6px" onclick="refazerOsp()">🔄 Refazer com essas abas</button>
         </details>
       </div>`;
     // 3. rotas
-    const ref = listaCalculoDist.find(p => p.id === refCalculoDist);
     h += `<div class="osp-passo">
         <div class="tit">${icone("rotas")} 3. Rotas pela estrada</div>
-        <div class="txt">${s.rotas ? `${s.rotas.feitas} rota(s) saindo de ${esc(ref?.nome || "?")}${
+        <div class="txt">${s.rotas ? `${s.rotas.feitas} rota(s) no mapa${
           s.rotas.falhas.length ? ` · sem rota: ${esc(s.rotas.falhas.join("; "))}` : ""}`
           : s.passo === "rotas" ? "traçando..." : "—"}</div>
       </div>`;
     // 4. distâncias
     let corpo = "—";
-    if (s.passo === "distancias") corpo = "calculando...";
+    if (s.passo === "distancias") corpo = "calculando (a separação pavimentado/não pavimentado pode levar alguns segundos)...";
     if (s.passo === "pronto"){
-      const linhas = s.distancias.map(x => `<tr><td>${esc(x.nome)}</td><td class="n"><b>${x.km != null ? km(x.km) : "—"}</b></td>
-          <td class="n">${x.planilha != null ? km(x.planilha) : ""}</td></tr>`).join("");
-      const comDt = paresDtOsp.filter(p => p.valor != null);
-      const linhasDt = comDt.length ? `<tr><th colspan="3" style="padding-top:8px">Bloco DT da planilha</th></tr>` +
-        comDt.map(p => `<tr><td>${esc(p.rotulo)}</td>
-          <td class="n"><b>${km(p.valor)}</b></td><td class="n">${p.valorPlanilha != null ? km(p.valorPlanilha) : ""}</td></tr>`).join("") : "";
-      const pulados = paresDtOsp.filter(p => p.pulado);
-      corpo = `<table class="osp-tab">
-          <tr><th>De ${esc(ref?.nome || "?")} até</th><th class="n">km</th><th class="n">estava</th></tr>
-          ${linhas}${linhasDt}
-        </table>
-        ${pulados.length ? `<div class="txt" style="color:#B45309">Não calculei: ${pulados.map(p => `DT ${esc(p.rotulo)}`).join(", ")}
-          (não achei esse ponto nas tabelas de coordenadas).</div>` : ""}`;
+      const ref = listaCalculoDist.find(p => p.id === refCalculoDist);
+      const celPlan = v => v != null ? km(v) : `<span style="color:#94A3B8">vazio</span>`;
+      let tab = "";
+      if (s.distancias.length) tab += `<tr><th>De ${esc(ref?.nome || "?")} até</th><th class="n">app</th><th class="n">planilha</th></tr>` +
+        s.distancias.map(x => `<tr><td>${esc(x.nome)}</td><td class="n"><b>${x.km != null ? km(x.km) : "—"}</b></td>
+          <td class="n">${celPlan(x.planilha)}</td></tr>`).join("");
+      const pares = paresDtOsp.filter(p => s.abas.has(p.aba));
+      const alertas = [];
+      pares.forEach(p => {
+        if (p.pulado || !p.app) return;
+        const a = p.app;
+        const planTotal = p.total ? p.total.valorPlanilha
+          : (p.pav?.valorPlanilha != null || p.naoPav?.valorPlanilha != null)
+            ? (p.pav?.valorPlanilha || 0) + (p.naoPav?.valorPlanilha || 0) : null;
+        const difere = planTotal != null && Math.abs(a.total - planTotal) / planTotal > 0.10;
+        if (difere) alertas.push({p, planTotal});
+        tab += `<tr><th colspan="3" style="padding-top:8px">${difere ? "⚠️ " : ""}${esc(p.rotulo)}</th></tr>`;
+        if (p.pav || p.naoPav){
+          tab += `<tr><td>pavimentado</td><td class="n"><b>${a.pav != null ? km(a.pav) : "—"}</b></td><td class="n">${celPlan(p.pav?.valorPlanilha)}</td></tr>
+            <tr><td>não pavimentado</td><td class="n"><b>${a.naoPav != null ? km(a.naoPav) : "—"}</b></td><td class="n">${celPlan(p.naoPav?.valorPlanilha)}</td></tr>`;
+        }
+        tab += `<tr><td>total</td><td class="n"><b>${km(a.total)}</b></td><td class="n">${celPlan(planTotal)}</td></tr>`;
+        if (a.erroPav) tab += `<tr><td colspan="3" style="color:#B45309">não consegui separar pavimentado/não pavimentado (${esc(a.erroPav)})</td></tr>`;
+      });
+      const pulados = pares.filter(p => p.pulado);
+      corpo = (tab ? `<table class="osp-tab">${tab}</table>` : "Nada pra calcular nesta planilha.") +
+        (alertas.length ? `<div class="txt" style="color:#B45309; margin-top:6px">⚠️ ${alertas.map(({p, planTotal}) =>
+            `${esc(p.rotulo)}: a rota automática deu ${km(p.app.total)} km e a planilha tem ${km(planTotal)} km`).join("; ")}.
+            Provavelmente o caminho de vocês passa por estrada de chão que o mapa não conhece. Ajuste a
+            rota pelo caminho certo (pode marcar os trechos de chão na mão) e clique em Recalcular.</div>
+          <div class="grupo-btn" style="margin-top:4px">${alertas.map(({p}) =>
+            `<button class="btn secundario osp-mini" onclick="ajustarRotaOsp('${encodeURIComponent(p.rota)}')">✏️ Ajustar ${esc(p.rotulo)}</button>`).join("")}</div>` : "") +
+        (pulados.length ? `<div class="txt" style="color:#B45309">Não calculei: ${pulados.map(p => `${esc(p.rotulo)} (${esc(p.pulado)})`).join("; ")}.</div>` : "") +
+        (s.rotas?.feitas ? `<button class="btn secundario osp-mini" style="margin-top:6px" onclick="calcularDistanciasOsp()">🔄 Recalcular com as rotas do mapa</button>` : "");
     }
     h += `<div class="osp-passo">
         <div class="tit">${icone("distancias")} 4. Distâncias</div>
@@ -1377,9 +1473,10 @@ function renderizarPainelOsp(){
           <button class="btn" onclick="baixarOspComDistancias()" ${escritasOsp.length ? "" : "disabled"}>⬇️ Planilha preenchida</button>
           <button class="btn secundario" onclick="gerarPranchaOsp()">🖼️ Gerar a prancha</button>
         </div>
-        <div class="txt">Antes de gerar a prancha você pode mexer em nome, ícone e posição dos
-          pontos direto no mapa. A planilha baixada é a mesma OSP, só com as distâncias preenchidas
-          (${escritasOsp.length} célula(s)).</div>
+        <div class="txt">${escritasOsp.length
+          ? `A planilha baixada é a mesma OSP, com ${escritasOsp.length} célula(s) que estavam vazias preenchidas.`
+          : "Nada pra preencher: as distâncias já estavam na planilha (o que já vem preenchido nunca é trocado)."}
+          Antes de gerar a prancha você pode mexer em nome, ícone e posição dos pontos no mapa.</div>
       </div>`;
   }
   out.innerHTML = h;
@@ -1413,28 +1510,38 @@ function extrairPontosOsp(wb){
     if (!ws["!ref"]) return;
     const ini = XLSX.utils.decode_range(ws["!ref"]).s; // linhas/colunas do sheet_to_json começam aqui
     const linhas = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true, blankrows:true});
+    // dois modelos de OSP: "Coordenadas: | Lat. | Long. | Distância do canteiro" (nome colado
+    // no Lat.) e o quadro "Coord. Inicial do trecho: ... | Lat. | Long." (nome lá na coluna A,
+    // Lat./Long. mais à direita). Nos dois o cabeçalho é Lat. seguido de Long.; o nome é o
+    // último texto à esquerda da coluna Lat. na mesma linha
+    const ehLat = s => /^LAT(\.|ITUDE)?:?$/.test(norm(s));
+    const ehLong = s => /^LONG(\.|ITUDE)?:?$/.test(norm(s));
+    const limparNome = s => s.replace(/^coord(enada)?s?\.?\s*/i, "").replace(/[:\s]+$/, "")
+                             .replace(/^inicial do trecho$/i, "Início do trecho").trim();
     linhas.forEach((linha, r) => {
       if (!Array.isArray(linha)) return;
       linha.forEach((cel, c) => {
-        if (!norm(cel).startsWith("COORDENADA")) return;
-        if (!norm(linha[c + 1]).startsWith("LAT") || !norm(linha[c + 2]).startsWith("LONG")) return;
-        const temDist = norm(linha[c + 3]).startsWith("DIST");
+        if (!ehLat(cel) || !ehLong(linha[c + 1])) return;
+        const temDist = norm(linha[c + 2]).startsWith("DIST");
         // coluna dos valores de distância: em algumas abas fica uma coluna depois do
         // cabeçalho (célula mesclada) — usa a coluna onde a tabela já tem mais números
-        let offTabela = 3;
+        let offTabela = 2;
         if (temDist){
-          const cont = {3:0, 4:0, 5:0};
+          const cont = {2:0, 3:0, 4:0};
           for (let i = r + 1; i < Math.min(linhas.length, r + 40); i++)
-            [3, 4, 5].forEach(o => { if (typeof (linhas[i] || [])[c + o] === "number") cont[o]++; });
-          offTabela = [4, 5].reduce((a, b) => cont[b] > cont[a] ? b : a, 3);
+            [2, 3, 4].forEach(o => { if (typeof (linhas[i] || [])[c + o] === "number") cont[o]++; });
+          offTabela = [3, 4].reduce((a, b) => cont[b] > cont[a] ? b : a, 2);
         }
         let vazias = 0;
         for (let i = r + 1; i < linhas.length && vazias < 2; i++){
           const l = linhas[i] || [];
-          const nome = l[c] != null ? String(l[c]).trim() : "";
-          if (!nome){ vazias++; continue; }
-          const lat = numCoord(l[c + 1]), lng = numCoord(l[c + 2]);
-          if (lat == null || lng == null) break; // acabou a tabela (ex.: bloco "DT" logo abaixo)
+          let nome = "";
+          for (let k = c - 1; k >= Math.max(0, c - 4); k--){ // até 4 colunas pra trás (não invade a tabela vizinha)
+            if (l[k] != null && typeof l[k] !== "number" && String(l[k]).trim()){ nome = limparNome(String(l[k]).trim()); break; }
+          }
+          const lat = numCoord(l[c]), lng = numCoord(l[c + 1]);
+          if (!nome && lat == null){ vazias++; continue; }
+          if (!nome || lat == null || lng == null) break; // acabou a tabela (ex.: bloco "DT" logo abaixo)
           vazias = 0;
           if (lat < -35 || lat > 6 || lng < -75 || lng > -30) continue; // fora do Brasil = digitado errado
           let celDist = null, distPlanilha = null;
@@ -1445,12 +1552,13 @@ function extrairPontosOsp(wb){
           const chave = `${nome.toUpperCase()}|${lat.toFixed(5)}|${lng.toFixed(5)}`;
           const existente = porChave.get(chave);
           if (existente){ // o mesmo canteiro se repete em MAPA e MAPA - BIDIM: um ponto só, várias células
-            if (celDist) existente.celulas.push({aba:nomeAba, cel:celDist});
+            if (celDist) existente.celulas.push({aba:nomeAba, cel:celDist, valorPlanilha:distPlanilha});
             existente.tabelaDeDistancia ||= temDist;
+            existente.abas.add(nomeAba);
             continue;
           }
-          const p = {nome, lat, lng, aba:nomeAba, distPlanilha, tabelaDeDistancia:temDist,
-                     celulas: celDist ? [{aba:nomeAba, cel:celDist}] : []};
+          const p = {nome, lat, lng, aba:nomeAba, abas:new Set([nomeAba]), distPlanilha, tabelaDeDistancia:temDist,
+                     celulas: celDist ? [{aba:nomeAba, cel:celDist, valorPlanilha:distPlanilha}] : []};
           porChave.set(chave, p);
           pontos.push(p);
         }
@@ -1461,25 +1569,64 @@ function extrairPontosOsp(wb){
 }
 /* bloco "DT" das abas de mapa (ex.: "Canteiro - Bueiro | 69,2") — pares de pontos
    cuja distância a planilha quer; a célula do valor fica logo à direita do rótulo */
+/* dois formatos de DT nas abas de mapa:
+   - bloco "DT" com "Canteiro - Bueiro | 69,2" (um valor por par, logo à direita)
+   - "DISTÂNCIAS DE TRANSPORTE (DT)" com "PEDREIRA X BSTC" e, embaixo, "PAVIMENTADO: 97 km"
+     e "NÃO PAVIMENTADO: 124 km" (valor mais à direita na linha)
+   cada par vira {aba, rotulo, lados:[a,b], total|pav|naoPav: {cel, valorPlanilha}} */
 function extrairParesDtOsp(wb){
   const pares = [];
+  const semAcento = s => String(s ?? "").trim().toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   wb.SheetNames.filter(n => /^MAPA/i.test(n.trim())).forEach(nomeAba => {
     const ws = wb.Sheets[nomeAba];
     if (!ws["!ref"]) return;
     const ini = XLSX.utils.decode_range(ws["!ref"]).s;
     const linhas = XLSX.utils.sheet_to_json(ws, {header:1, defval:null, raw:true, blankrows:true});
+    const ref = (i, c) => XLSX.utils.encode_cell({r: ini.r + i, c: ini.c + c});
+    // primeiro número à direita da coluna c na linha i -> {col, valor}
+    const numeroADireita = (i, c) => {
+      const l = linhas[i] || [];
+      for (let k = c + 1; k < Math.min(l.length, c + 8); k++) if (typeof l[k] === "number") return {col:k, valor:l[k]};
+      return null;
+    };
     linhas.forEach((linha, r) => {
       (linha || []).forEach((cel, c) => {
-        if (String(cel ?? "").trim().toUpperCase() !== "DT") return;
-        let vazias = 0;
-        for (let i = r + 1; i < linhas.length && vazias < 2; i++){
-          const rotulo = String((linhas[i] || [])[c] ?? "").trim();
-          if (!rotulo){ vazias++; continue; }
-          vazias = 0;
-          if (!/\s-\s/.test(rotulo)) break;
-          pares.push({aba:nomeAba, rotulo, cel: XLSX.utils.encode_cell({r: ini.r + i, c: ini.c + c + 1}),
-                      valorPlanilha: typeof linhas[i][c + 1] === "number" ? linhas[i][c + 1] : null});
+        const txt = String(cel ?? "").trim();
+        if (semAcento(txt) === "DT"){
+          let vazias = 0;
+          for (let i = r + 1; i < linhas.length && vazias < 2; i++){
+            const rotulo = String((linhas[i] || [])[c] ?? "").trim();
+            if (!rotulo){ vazias++; continue; }
+            vazias = 0;
+            if (!/\s-\s/.test(rotulo)) break;
+            const v = linhas[i][c + 1];
+            pares.push({aba:nomeAba, rotulo, lados: rotulo.split(/\s-\s/),
+                        total:{cel: ref(i, c + 1), valorPlanilha: typeof v === "number" ? v : null}});
+          }
+          return;
         }
+        const m = txt.length <= 40 && txt.match(/^(.+?)\s+X\s+(.+)$/i);
+        if (!m) return;
+        const par = {aba:nomeAba, rotulo:txt, lados:[m[1].trim(), m[2].trim()]};
+        let colValor = null;
+        for (let i = r + 1; i <= r + 3 && i < linhas.length; i++){
+          const rot = semAcento((linhas[i] || [])[c]);
+          const tipo = /^(NAO|SEM)\s*PAV/.test(rot) ? "naoPav" : /^PAV/.test(rot) ? "pav" : null;
+          if (!tipo || par[tipo]) continue;
+          const n = numeroADireita(i, c);
+          if (n) colValor = n.col;
+          par[tipo] = {linha:i, valorPlanilha: n ? n.valor : null, col: n ? n.col : null};
+        }
+        if (par.pav || par.naoPav){
+          ["pav", "naoPav"].forEach(t => {
+            if (!par[t]) return;
+            par[t].cel = ref(par[t].linha, par[t].col ?? colValor ?? c + 3);
+          });
+        } else {
+          const n = numeroADireita(r, c);
+          par.total = {cel: ref(r, n ? n.col : c + 1), valorPlanilha: n ? n.valor : null};
+        }
+        pares.push(par);
       });
     });
   });
@@ -1494,11 +1641,37 @@ function categoriaPontoOsp(nome){
   if (/USINA/.test(n)) return CATEGORIAS.usina;
   if (/\bCAE\b/.test(n)) return CATEGORIAS.cae;
   if (/JAZIDA/.test(n)) return CATEGORIAS.jazida;
-  if (/OBRA|BUEIRO|EROS/.test(n)) return {icone:"🚧", cor:"#EA580C"};
+  // obra/serviço: erosão, bueiro e as siglas de bueiro (BSTC, BTTC, BDTC, BSCC...)
+  if (/OBRA|BUEIRO|EROS|\bB[SDT][TC]C\b/.test(n)) return {icone:"🚧", cor:"#EA580C", obra:true};
+  // início/fim do trecho: marco do trecho, não é destino de transporte
+  if (/^INICIO|^FIM\b|DO TRECHO/.test(n)) return {icone:"🚩", cor:"#0F172A", marco:true};
   return null;
 }
 function pontosOspEscolhidos(){
-  return ospEstado ? pontosOspLidos.filter(p => ospEstado.abas.has(p.aba)) : [];
+  return ospEstado ? pontosOspLidos.filter(p => [...p.abas].some(a => ospEstado.abas.has(a))) : [];
+}
+/* aba "de outra OSP": modelo copiado sem atualizar (ex.: Mapa bueiro do Trecho 71 com a obra
+   do Trecho 44, a 190 km). Se a aba tem ponto de obra/marco e NENHUM fica a menos de 30 km
+   do trecho escolhido, desconfia — fica desmarcada e o painel avisa */
+function abasSuspeitasOsp(){
+  const suspeitas = new Set();
+  // referência do "lugar da obra": o trecho escolhido; se ainda não tem, o Início/Fim do
+  // trecho que a própria planilha traz
+  const cam = trechoOspEscolhido != null ? camadasTrechos[trechoOspEscolhido] : null;
+  let vertices;
+  if (cam){
+    const lls = cam.getLatLngs();
+    vertices = (Array.isArray(lls[0]) ? lls.flat() : lls).filter((_, i, a) => i % Math.max(1, Math.floor(a.length / 800)) === 0);
+  } else {
+    vertices = pontosOspLidos.filter(p => categoriaPontoOsp(p.nome)?.marco).map(p => L.latLng(p.lat, p.lng));
+  }
+  if (!vertices.length) return suspeitas;
+  const distTrecho = p => Math.min(...vertices.map(v => map.distance(v, [p.lat, p.lng])));
+  [...new Set(pontosOspLidos.flatMap(p => [...p.abas]))].forEach(aba => {
+    const locais = pontosOspLidos.filter(p => p.abas.has(aba) && (categoriaPontoOsp(p.nome)?.obra || categoriaPontoOsp(p.nome)?.marco));
+    if (locais.length && locais.every(p => distTrecho(p) > 30000)) suspeitas.add(aba);
+  });
+  return suspeitas;
 }
 function importarPontosOsp(automatico){
   const escolhidos = pontosOspEscolhidos();
@@ -1514,10 +1687,24 @@ function importarPontosOsp(automatico){
     registrarDesenho(layer, p.nome);
     novos++;
   });
+  // a planilha já traz início/fim do trecho: vale o dela, tira o Início/Fim que o
+  // "usar trecho" tinha criado a partir do shapefile (senão ficam dois pares no mapa)
+  if (escolhidos.some(p => categoriaPontoOsp(p.nome)?.marco)){
+    Object.values(camadasDesenho).forEach(l => {
+      if (l instanceof L.Marker && /^(Início|Fim) Id \d+$/.test(l._nomeRTA || "")){
+        map.removeLayer(l); grupoDesenhos.removeLayer(l); delete camadasDesenho[l._idRTA];
+      }
+    });
+  }
   salvarDesenhos();
   // lista de distância: só o que é material/obra ou veio de tabela com coluna de distância
   // (os pontos de meio-fio/descida d'água do MAPA-DRENAGEM são geometria do serviço, não destino de transporte)
-  const praDistancia = escolhidos.filter(p => p.tabelaDeDistancia || categoriaPontoOsp(p.nome));
+  // (só no modelo que tem coluna "Distância do canteiro"; no modelo de pares "PEDREIRA X BSTC"
+  // quem manda é o DT, e início/fim do trecho nunca são destino de transporte)
+  const temTabelaDist = escolhidos.some(p => p.tabelaDeDistancia);
+  const praDistancia = temTabelaDist
+    ? escolhidos.filter(p => !categoriaPontoOsp(p.nome)?.marco && (p.tabelaDeDistancia || categoriaPontoOsp(p.nome)))
+    : [];
   listaCalculoDist = praDistancia.map(p => ({id:novoId(), nome:p.nome, lat:p.lat, lng:p.lng}));
   const canteiro = listaCalculoDist.find(p => /CANTEIRO/i.test(p.nome));
   refCalculoDist = (canteiro || listaCalculoDist[0])?.id || null;
@@ -1544,18 +1731,15 @@ function enquadrarResultadoOsp(){
   if (cam) b.extend(cam.getBounds());
   map.fitBounds(b, {padding:[40, 40]});
 }
-/* rota pela estrada (OSRM) do canteiro/referência até cada ponto da lista de distância,
-   registrada como rota normal do levantamento (mesmo formato de uma traçada à mão:
-   extensão, pernas e waypoints) — com isso o cálculo de distância segue a própria rota */
-async function tracarRotasOsp(){
-  const ref = listaCalculoDist.find(p => p.id === refCalculoDist);
-  if (!ref) return {feitas:0, falhas:[]};
+/* rota pela estrada (OSRM) pra cada trajeto planejado, registrada como rota normal do
+   levantamento (mesmo formato de uma traçada à mão: extensão, pernas e waypoints) — dá pra
+   reabrir e ajustar, e o cálculo de distância segue a própria rota. Rota que já existe com
+   o mesmo nome (ex.: ela já ajustou) não é refeita */
+async function tracarRotasOsp(planos){
   const existentes = new Set(Object.values(camadasDesenho).filter(l => !(l instanceof L.Marker)).map(l => l._nomeRTA));
   let feitas = 0;
   const falhas = [];
-  for (const p of listaCalculoDist){
-    if (p.id === ref.id) continue;
-    const nome = `${ref.nome} - ${p.nome}`.toUpperCase();
+  for (const {de:ref, para:p, nome} of planos){
     if (existentes.has(nome)){ feitas++; continue; }
     try {
       const coords = `${ref.lng.toFixed(6)},${ref.lat.toFixed(6)};${p.lng.toFixed(6)},${p.lat.toFixed(6)}`;
@@ -1566,13 +1750,12 @@ async function tracarRotasOsp(){
       // a rota do OSRM sai/chega no ponto da estrada mais próximo: emenda nos pontos de verdade,
       // senão a rede de rotas não "encosta" no canteiro/obra e o cálculo cai no OSRM de novo.
       // A emenda entra na extensão da rota, pra rota no mapa, memória e planilha darem o mesmo número
-      const [lng0, lat0] = geom.coordinates[0];
-      const [lng1, lat1] = geom.coordinates[geom.coordinates.length - 1];
-      const emendas = map.distance([ref.lat, ref.lng], [lat0, lng0]) + map.distance([lat1, lng1], [p.lat, p.lng]);
       geom.coordinates.unshift([ref.lng, ref.lat]);
       geom.coordinates.push([p.lng, p.lat]);
       const linha = L.geoJSON(geom).getLayers()[0];
-      linha._legsRTA = [j.routes[0].distance + emendas];
+      // extensão = comprimento do próprio traçado (com as emendas), igual ao que o cálculo
+      // pela rede de rotas mede — o número "distance" do OSRM sai um pouco diferente
+      linha._legsRTA = [distanciaMetros(geom.coordinates.map(([lng, lat]) => L.latLng(lat, lng)))];
       linha._waypointsRTA = [[+ref.lat.toFixed(6), +ref.lng.toFixed(6)], [+p.lat.toFixed(6), +p.lng.toFixed(6)]];
       registrarDesenho(linha, nome);
       feitas++;
@@ -1583,57 +1766,52 @@ async function tracarRotasOsp(){
   salvarDesenhos();
   return {feitas, falhas};
 }
-/* o que vai pro Excel devolvido: a coluna "Distância do canteiro (km)" das tabelas de
-   coordenadas (menos a linha do próprio canteiro, que na planilha guarda outra coisa)
-   e os pares do bloco "DT" cujos dois lados dão pra reconhecer sem ambiguidade */
+/* o que vai pro Excel devolvido. Regra: SÓ célula vazia é preenchida — o que a planilha já
+   traz (muitas vezes a rota que a equipe definiu, por estrada de chão que o mapa não conhece)
+   nunca é sobrescrito; vira só comparação no painel.
+   - coluna "Distância do canteiro (km)" (menos a linha do próprio canteiro)
+   - pares do DT: total, ou pavimentado / não pavimentado pela análise de pavimento da rota */
 async function montarEscritasOsp(){
   escritasOsp = [];
+  const s = ospEstado;
   const out = document.getElementById("resultado-calc-dist");
-  const ref = listaCalculoDist.find(p => p.id === refCalculoDist);
-  const parseKm = s => Number(String(s).replace(/\./g, "").replace(",", "."));
+  const ref = listaCalculoDist.length > 1 ? listaCalculoDist.find(p => p.id === refCalculoDist) : null;
+  const parseKm = t => Number(String(t).replace(/\./g, "").replace(",", "."));
   const kmPorNome = new Map();
-  (out.dataset.texto || "").split("\n").forEach(l => {
+  if (ref) (out.dataset.texto || "").split("\n").forEach(l => {
     const m = l.match(/^(.*): ([\d.,]+) km$/);
     if (m) kmPorNome.set(m[1], parseKm(m[2]));
   });
+  const escrever = (aba, cel, valorPlanilha, valor, rotulo) => {
+    if (valorPlanilha == null && valor != null) escritasOsp.push({aba, cel, valor: +valor.toFixed(2), rotulo});
+  };
   const chave = p => `${p.nome.toUpperCase()}|${p.lat.toFixed(5)}|${p.lng.toFixed(5)}`;
-  const chaveRef = ref ? chave(ref) : null;
-  pontosOspEscolhidos().forEach(p => {
-    if (chave(p) === chaveRef || !kmPorNome.has(p.nome)) return;
-    p.celulas.forEach(({aba, cel}) => escritasOsp.push({aba, cel, valor: +kmPorNome.get(p.nome).toFixed(2), rotulo: p.nome}));
+  if (ref) pontosOspEscolhidos().forEach(p => {
+    if (chave(p) === chave(ref) || !kmPorNome.has(p.nome)) return;
+    p.celulas.filter(x => s.abas.has(x.aba))
+      .forEach(x => escrever(x.aba, x.cel, x.valorPlanilha, kmPorNome.get(p.nome), p.nome));
   });
   // tabela do painel: cada ponto da lista de distância (menos a referência), com o que a planilha tinha
-  if (ospEstado) ospEstado.distancias = listaCalculoDist.filter(p => p.id !== refCalculoDist).map(p => {
+  s.distancias = ref ? listaCalculoDist.filter(p => p.id !== ref.id).map(p => {
     const orig = pontosOspLidos.find(o => chave(o) === chave(p));
     return {nome: p.nome, km: kmPorNome.has(p.nome) ? kmPorNome.get(p.nome) : null, planilha: orig?.distPlanilha ?? null};
-  });
-  const semAcento = s => String(s).toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "").trim();
-  const resolver = lado => {
-    const alvo = semAcento(lado);
-    const achados = pontosOspLidos.filter(p => {
-      const n = semAcento(p.nome);
-      return n === alvo || n.startsWith(alvo + " ") || n.startsWith(alvo + "(") || n.split(/\s+/)[0] === alvo;
-    });
-    if (!achados.length) return null;
-    // "Obra" e "Obra (Erosão)" a 3 m uma da outra contam como o mesmo lugar
-    return achados.every(p => map.distance([p.lat, p.lng], [achados[0].lat, achados[0].lng]) < 200) ? achados[0] : null;
-  };
-  paresDtOsp.forEach(par => { par.pulado = null; par.valor = null; });
+  }) : [];
   for (const par of paresDtOsp){
-    const [a, b] = par.rotulo.split(/\s-\s/).map(resolver);
-    if (!a || !b){ par.pulado = "não reconheci os dois pontos"; continue; }
-    // um dos lados é o próprio canteiro de referência: usa a mesma distância da lista (a da
-    // rota desenhada), pra planilha não ficar com dois números pro mesmo par
-    const outro = chaveRef && chave(a) === chaveRef ? b : chaveRef && chave(b) === chaveRef ? a : null;
-    if (outro && kmPorNome.has(outro.nome)){
-      par.valor = +kmPorNome.get(outro.nome).toFixed(2);
-    } else {
-      const alvo = {nome:b.nome, lat:b.lat, lng:b.lng};
-      try { await calcularKmsOsrmLote(a.lat, a.lng, [alvo]); } catch (e){ par.pulado = "sem rota"; continue; }
-      if (!alvo.km){ par.pulado = "sem rota"; continue; }
-      par.valor = +parseKm(alvo.km).toFixed(2);
+    par.app = null;
+    if (!s.abas.has(par.aba) || par.pulado || !par.rota) continue;
+    const linha = rotaPorNomeOsp(par.rota);
+    if (!linha){ par.pulado = "não consegui traçar a rota"; continue; }
+    const app = {total: comprimentoRotaM(linha) / 1000};
+    if (par.pav || par.naoPav){
+      try {
+        const pv = pavEfetivo(linha) || await analisarPavimento(linha);
+        app.pav = pv.pav / 1000; app.naoPav = pv.chao / 1000;
+      } catch (e){ app.erroPav = e.message || String(e); }
     }
-    escritasOsp.push({aba:par.aba, cel:par.cel, valor:par.valor, rotulo:`DT ${par.rotulo}`});
+    par.app = app;
+    if (par.total) escrever(par.aba, par.total.cel, par.total.valorPlanilha, app.total, `DT ${par.rotulo}`);
+    if (par.pav) escrever(par.aba, par.pav.cel, par.pav.valorPlanilha, app.pav, `DT ${par.rotulo} (pavimentado)`);
+    if (par.naoPav) escrever(par.aba, par.naoPav.cel, par.naoPav.valorPlanilha, app.naoPav, `DT ${par.rotulo} (não pavimentado)`);
   }
 }
 /* devolve o próprio arquivo da OSP com as distâncias gravadas nas células — mexe só no
@@ -2091,6 +2269,29 @@ function renderizarChao(layer){
 async function analisarPavimento(layer){
   const lls = layer.getLatLngs();
   const pts = Array.isArray(lls[0]) ? lls.flat() : lls;
+  // o Valhalla público recusa trajeto acima de 200 km — quebra em pedaços de até 180 km
+  // (emendados no mesmo vértice) e soma
+  const pedacos = [];
+  let atual = [pts[0]], acum = 0;
+  for (let i = 1; i < pts.length; i++){
+    acum += map.distance(pts[i - 1], pts[i]);
+    atual.push(pts[i]);
+    if (acum >= 180000 && i < pts.length - 1){ pedacos.push(atual); atual = [pts[i]]; acum = 0; }
+  }
+  pedacos.push(atual);
+  let pav = 0, chao = 0;
+  const segs = [];
+  for (const pedaco of pedacos){
+    const r = await analisarPavimentoPedaco(pedaco);
+    pav += r.pav; chao += r.chao;
+    segs.push(...r.segs);
+  }
+  layer._pavRTA = {pav: Math.round(pav), chao: Math.round(chao), segs};
+  renderizarChao(layer);
+  salvarDesenhos();
+  return layer._pavRTA;
+}
+async function analisarPavimentoPedaco(pts){
   const passo = Math.max(1, Math.ceil(pts.length / 700));
   const shape = pts.filter((_, i) => i % passo === 0 || i === pts.length - 1)
                    .map(p => ({lat: +p.lat.toFixed(6), lon: +p.lng.toFixed(6)}));
@@ -2128,10 +2329,7 @@ async function analisarPavimento(layer){
       pav += m;
     }
   });
-  layer._pavRTA = {pav: Math.round(pav), chao: Math.round(chao), segs};
-  renderizarChao(layer);
-  salvarDesenhos();
-  return layer._pavRTA;
+  return {pav, chao, segs};
 }
 async function analisarPavimentoDesenho(id){
   const l = camadasDesenho[id];
