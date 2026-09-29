@@ -1087,6 +1087,30 @@ function isolarTrecho(idAlvo){
   if (cam) map.fitBounds(cam.getBounds(), {padding:[40, 40]});
   aviso("Mostrando apenas o trecho escolhido. Use a caixa do grupo pra reexibir todos.");
 }
+/* isola o trecho e já cria os pontos de início/fim como desenho normal (editável:
+   dá pra renomear, mudar ícone, mover) — em vez de uma imagem pronta, é só um
+   atalho pra não montar essa cena à mão toda vez que chega uma OSP nova */
+function usarTrechoNaPrancha(idAlvo){
+  const t = trechosArquivo.find(x => x.id === idAlvo);
+  if (!t || !t.coords?.length){ aviso("Trecho sem geometria."); return; }
+  isolarTrecho(idAlvo);
+  // t.coords vem como multi-linha (array de segmentos, cada um array de [lat,lng]) —
+  // achata pra pegar o primeiro e o último ponto de verdade, não o primeiro segmento inteiro
+  const pontos = t.coords.flat();
+  const [latI, lngI] = pontos[0];
+  const [latF, lngF] = pontos[pontos.length - 1];
+  const criarPonto = (nome, lat, lng) => {
+    const layer = L.marker([lat, lng]);
+    registrarDesenho(layer, nome);
+    return layer;
+  };
+  criarPonto(`Início Id ${t.id}`, latI, lngI);
+  criarPonto(`Fim Id ${t.id}`, latF, lngF);
+  salvarDesenhos();
+  document.getElementById("pr-sub").value = t.nome;
+  document.getElementById("secao-prancha").open = true;
+  aviso("Início/Fim marcados como pontos editáveis. Ajuste nome/ícone se quiser e siga pra prancha.");
+}
 function renderizarTrechos(){
   Object.values(camadasTrechos).forEach(l => map.removeLayer(l));
   Object.keys(camadasTrechos).forEach(k => delete camadasTrechos[k]);
@@ -1149,7 +1173,9 @@ function renderizarTrechos(){
       <input type="checkbox" class="chk-trecho" title="Mostrar no mapa e na prancha">
       <span class="nome" style="font-size:12px">Id ${t.id} — ${esc(t.nome)}</span>
       <button title="Esconde os outros trechos e deixa só este visível" style="font-size:11px; white-space:nowrap"
-        onclick="isolarTrecho(${t.id})">🎯 Só este</button>`;
+        onclick="isolarTrecho(${t.id})">🎯 Só este</button>
+      <button title="Isola o trecho, marca início/fim como pontos editáveis e já deixa pronto pra gerar a prancha"
+        style="font-size:11px; white-space:nowrap" onclick="usarTrechoNaPrancha(${t.id})">🖼️ Usar na prancha</button>`;
     const cb = el.querySelector(".chk-trecho");
     cb.checked = !trechosOcultos.has(t.id);
     cb.addEventListener("change", () => {
