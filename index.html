@@ -170,6 +170,18 @@
         font-size:13px; font-weight:600; text-decoration:none; border:1px solid var(--borda)">
         ❓ Como usar o Geoportal (tutorial)</a>
 
+      <details class="secao" id="secao-osp">
+        <summary>📄 Abrir OSP (Excel) e sugerir o trecho</summary>
+        <div class="corpo">
+          <p class="dica">Selecione o Excel da OSP (o mesmo modelo com REGIONAL/TRECHO Nº/TRECHO/EXTENSÃO
+            no quadro de cabeçalho). O geoportal lê esses campos e sugere qual trecho já carregado
+            bate com ela — <b>não troca nada sozinho</b>, só sugere pra você clicar no certo.</p>
+          <input type="file" id="arquivo-osp" accept=".xlsx,.xlsm,.xls" style="display:none">
+          <button class="btn" onclick="document.getElementById('arquivo-osp').click()">📄 Selecionar planilha da OSP</button>
+          <div id="resultado-osp" style="margin-top:10px"></div>
+        </div>
+      </details>
+
       <details class="secao">
         <summary>🗺️ Mapa de fundo</summary>
         <div class="corpo">
@@ -1110,6 +1122,120 @@ function usarTrechoNaPrancha(idAlvo){
   document.getElementById("pr-sub").value = t.nome;
   document.getElementById("secao-prancha").open = true;
   aviso("Início/Fim marcados como pontos editáveis. Ajuste nome/ícone se quiser e siga pra prancha.");
+}
+
+/* ================= Abrir OSP (Excel) e sugerir o trecho =================
+   lê o quadro de cabeçalho (REGIONAL/TRECHO Nº/TRECHO/EXTENSÃO) que já existe
+   nos modelos de Orçamento/Inventário da OSP e pontua os trechos carregados
+   pra sugerir o mais parecido — nunca troca nada sozinha, só sugere; quem
+   decide é sempre um clique em "Usar este" (chama o mesmo usarTrechoNaPrancha
+   de sempre) */
+document.getElementById("arquivo-osp").addEventListener("change", async ev => {
+  const arq = ev.target.files[0];
+  ev.target.value = "";
+  if (!arq) return;
+  const out = document.getElementById("resultado-osp");
+  out.innerHTML = `<p class="dica">Lendo planilha... (pode demorar alguns segundos em arquivos grandes)</p>`;
+  try {
+    await carregarScriptExt("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js", "XLSX");
+    const buf = await arq.arrayBuffer();
+    const wb = XLSX.read(buf, {type:"array", cellFormula:false, cellHTML:false});
+    const dados = extrairDadosOsp(wb);
+    if (!dados){
+      out.innerHTML = `<p class="dica">Não achei o quadro (REGIONAL/TRECHO Nº/TRECHO/EXTENSÃO) em nenhuma
+        aba desta planilha. Pode escolher o trecho manualmente em 📌 Pontos fixos → Trechos.</p>`;
+      return;
+    }
+    mostrarCandidatosOsp(dados, acharTrechosCandidatosOsp(dados));
+  } catch (e){
+    out.innerHTML = `<p class="dica">Não consegui ler essa planilha: ${esc(e.message || String(e))}</p>`;
+  }
+});
+function extrairDadosOsp(wb){
+  const norm = s => String(s ?? "").trim().toUpperCase();
+  const testes = [
+    ["regional", r => r.startsWith("REGIONAL")],
+    ["trechoNum", r => r.startsWith("TRECHO N")],
+    ["cidadePolo", r => r.startsWith("CIDADE P")],
+    ["extensao", r => r.startsWith("EXTENS")],
+    ["contrato", r => r.startsWith("CONTRATO")],
+    ["trechoNome", r => r === "TRECHO:" || r === "TRECHO"],
+  ];
+  // o mesmo quadro (REGIONAL/TRECHO Nº/TRECHO/EXTENSÃO) se repete em várias abas
+  // (Orçamento, Inventário G.X...); olha todas e fica com a mais completa — a
+  // primeira aba só bate sozinha às vezes por coincidência (ex.: uma coluna
+  // "S.R.E" de tabela batendo com o teste de "TRECHO:")
+  let melhor = null, melhorPontos = -1;
+  for (const nomeAba of wb.SheetNames){
+    const linhas = XLSX.utils.sheet_to_json(wb.Sheets[nomeAba], {header:1, defval:null, raw:true});
+    const achado = {};
+    linhas.forEach(linha => {
+      if (!Array.isArray(linha)) return;
+      linha.forEach((cel, i) => {
+        const rot = norm(cel);
+        if (!rot) return;
+        const teste = testes.find(([, f]) => f(rot));
+        if (!teste || achado[teste[0]] !== undefined) return;
+        const valor = linha.slice(i + 1).find(v => v !== null && v !== "");
+        if (valor !== undefined) achado[teste[0]] = valor;
+      });
+    });
+    if (!achado.trechoNome || !achado.trechoNum) continue; // exige os dois — descarta bate-e-volta isolado
+    const pontos = Object.keys(achado).length;
+    if (pontos > melhorPontos){
+      melhorPontos = pontos;
+      melhor = {
+        aba: nomeAba,
+        regional: achado.regional != null ? Number(achado.regional) : null,
+        trechoNum: achado.trechoNum != null ? String(achado.trechoNum).trim() : "",
+        trechoNome: achado.trechoNome != null ? String(achado.trechoNome).trim() : "",
+        cidadePolo: achado.cidadePolo != null ? String(achado.cidadePolo).trim() : "",
+        extensao: achado.extensao != null && !isNaN(Number(achado.extensao)) ? Number(achado.extensao) : null,
+        contrato: achado.contrato != null ? String(achado.contrato).trim() : "",
+      };
+    }
+  }
+  return melhor;
+}
+function acharTrechosCandidatosOsp(dados){
+  const semAcento = s => String(s ?? "").toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const palavras = s => new Set(semAcento(s).replace(/[^A-Z0-9]+/g, " ").trim().split(" ").filter(w => w.length > 2));
+  const alvoPalavras = palavras(dados.trechoNome);
+  const rodoviaMatch = semAcento(dados.trechoNome).match(/TO-?\s?\d+/);
+  const rodoviaAlvo = rodoviaMatch ? rodoviaMatch[0].replace(/\s/g, "").replace("TO", "TO-") : null;
+  return trechosArquivo.map(t => {
+    let pontos = 0;
+    if (dados.regional != null && t.regiao === dados.regional) pontos += 3;
+    if (rodoviaAlvo && (t.rodovia || "").replace(/\s/g, "").toUpperCase() === rodoviaAlvo) pontos += 3;
+    const tPalavras = palavras(t.nome);
+    alvoPalavras.forEach(w => { if (tPalavras.has(w)) pontos += 1; });
+    if (dados.extensao && t.extensao_km){
+      const dif = Math.abs(t.extensao_km - dados.extensao) / Math.max(t.extensao_km, dados.extensao);
+      if (dif < 0.05) pontos += 3; else if (dif < 0.15) pontos += 1;
+    }
+    return {t, pontos};
+  }).filter(c => c.pontos > 0).sort((a, b) => b.pontos - a.pontos).slice(0, 5);
+}
+function mostrarCandidatosOsp(dados, candidatos){
+  const out = document.getElementById("resultado-osp");
+  const fmtKm = n => n.toLocaleString("pt-BR", {maximumFractionDigits:2});
+  const resumo = `<b>Lido da planilha</b> (aba "${esc(dados.aba)}"): Regional ${dados.regional ?? "?"} ·
+    Trecho Nº ${esc(dados.trechoNum || "?")}${dados.extensao ? " · " + fmtKm(dados.extensao) + " km" : ""}<br>
+    <i>${esc(dados.trechoNome || "(sem descrição de trecho na planilha)")}</i>`;
+  if (!candidatos.length){
+    out.innerHTML = `<p class="dica">${resumo}</p>
+      <p class="dica">Não achei nenhum trecho parecido nos dados carregados. Escolha manualmente em
+      📌 Pontos fixos → Trechos.</p>`;
+    return;
+  }
+  out.innerHTML = `<p class="dica">${resumo}</p>
+    <p class="dica"><b>Trechos parecidos — clique no certo:</b></p>` +
+    candidatos.map(c => `
+      <div style="display:flex; align-items:center; gap:6px; padding:5px 0; border-bottom:1px solid #eef2f7">
+        <span style="flex:1; font-size:12.5px">Id ${c.t.id} — ${esc(c.t.nome)} (${fmtKm(c.t.extensao_km)} km)</span>
+        <button class="btn secundario" style="width:auto; padding:5px 10px; font-size:12px"
+          onclick="usarTrechoNaPrancha(${c.t.id})">Usar este</button>
+      </div>`).join("");
 }
 function renderizarTrechos(){
   Object.values(camadasTrechos).forEach(l => map.removeLayer(l));
