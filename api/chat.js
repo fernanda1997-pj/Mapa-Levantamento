@@ -9,6 +9,7 @@
      CHAT_MODEL      (opcional) padrão gemini-flash-latest (alias do Flash mais recente) */
 
 const MODELO = process.env.CHAT_MODEL || "gemini-flash-latest";
+const MODELO_RESERVA = process.env.CHAT_MODEL_RESERVA || "gemini-flash-lite-latest";
 const MAX_MENSAGENS = 60;
 const MAX_BYTES = 80 * 1024;
 
@@ -183,8 +184,8 @@ module.exports = async (req, res) => {
     return;
   }
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(MODELO)}:generateContent`;
-    const chamar = comPensamento0 => fetch(url, {
+    const urlDe = modelo => `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`;
+    const chamar = (comPensamento0, modelo = MODELO) => fetch(urlDe(modelo), {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
       body: JSON.stringify({
@@ -202,9 +203,11 @@ module.exports = async (req, res) => {
       r = await chamar(false);
       j = await r.json().catch(() => ({}));
     }
-    if (r.status === 500 || r.status === 503) { // modelo sobrecarregado: uma nova tentativa
-      await new Promise(ok => setTimeout(ok, 1500));
-      r = await chamar(true);
+    // modelo sobrecarregado (503/500): tenta de novo e, se continuar, cai para a versão leve (menos fila)
+    for (const modelo of [MODELO, MODELO_RESERVA]) {
+      if (r.status !== 500 && r.status !== 503) break;
+      await new Promise(ok => setTimeout(ok, 1200));
+      r = await chamar(true, modelo);
       j = await r.json().catch(() => ({}));
     }
     if (!r.ok) {
