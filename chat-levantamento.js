@@ -252,6 +252,138 @@ function resumoAcao(nome, entrada, resultado){
   return nome;
 }
 
+/* ================= Modo texto (sem IA, sem custo) =================
+   Lê linhas digitadas/coladas e chama as mesmas ferramentas. Nada sai do navegador. */
+const USAR_IA = false; // true = conversa livre via /api/chat (precisa de chave paga no Vercel)
+
+/* um número com possível separador de milhar brasileiro: 789.012,5 -> 789012.5 */
+function numeroBR(t){
+  t = t.trim();
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)){
+    // "789.012" é milhar só se der um valor de UTM (>= 100 mil); "-12.035" é grau decimal
+    const v = parseFloat(t.replace(/\./g, "").replace(",", "."));
+    if (Math.abs(v) >= 100000) return v;
+  }
+  return parseFloat(t.replace(",", "."));
+}
+const reDMS = /\d+\s*°\s*\d+\s*['′]\s*\d+(?:[.,]\d+)?\s*(?:"|″|''|”)?\s*[NSEOWL]?/gi;
+
+/* acha a coordenada dentro de um texto: devolve {ini, fim, coord} ou null.
+   coord = {lat,lng} | {este,norte,zona?}; lança Error se estiver incompleta/confusa */
+function acharCoordenada(texto){
+  const dms = [...texto.matchAll(reDMS)];
+  if (dms.length >= 2){
+    const [a, b] = dms.slice(-2);
+    let la = a[0].replace(/L\s*$/i, "E"), lb = b[0].replace(/L\s*$/i, "E");
+    let lat = parseCoordDMS(la), lng = parseCoordDMS(lb);
+    if (/[EOLW]\s*$/i.test(a[0]) && /[NS]\s*$/i.test(b[0])) [lat, lng] = [lng, lat]; // veio "lng, lat"
+    return {ini:a.index, fim:b.index + b[0].length, coord:{lat, lng}};
+  }
+  let zona;
+  let t = texto;
+  const mz = t.match(/(?:zona\s*)?\b(22|23)\s*[Ss]\b/i);
+  if (mz){ zona = mz[1]; t = t.slice(0, mz.index) + " ".repeat(mz[0].length) + t.slice(mz.index + mz[0].length); }
+  const nums = [...t.matchAll(/-?\d{1,3}(?:\.\d{3})+(?:,\d+)?(?!\d)|-?\d+(?:[.,]\d+)?/g)];
+  if (nums.length < 2) return null;
+  const [a, b] = nums.slice(-2);
+  const va = numeroBR(a[0]), vb = numeroBR(b[0]);
+  const ini = a.index, fim = b.index + b[0].length;
+  if (Math.abs(va) >= 100000 || Math.abs(vb) >= 100000)
+    return {ini, fim, coord:{este:va, norte:vb, ...(zona ? {zona} : {})}};
+  return {ini, fim, coord:{lat:va, lng:vb}};
+}
+function nomeAntesDaCoordenada(texto, ini){
+  return texto.slice(0, ini).replace(/\b(?:lat(?:itude)?|lon(?:gitude)?|coord(?:enadas?)?)\b\s*[:=]?\s*$/i, "")
+              .replace(/[\s\-–—:;,|=(]+$/g, "").trim();
+}
+const ICONES_POR_PALAVRA = ["canteiro", "pedreira", "areial", "jazida", "usina", "cimento", "apoio"];
+function iconeDoNome(nome){
+  const n = norm(nome);
+  const k = ICONES_POR_PALAVRA.find(p => n.includes(p));
+  return k ? {icone:CATEGORIAS[k].icone, cor:CATEGORIAS[k].cor} : {};
+}
+
+const AJUDA_TEXTO =
+`Escreva um ponto por linha (pode colar uma lista):
+  CANTEIRO  -12,0357 -48,5452
+  PEDREIRA  789012 8667000
+  AREIAL  12°02'08.5"S 48°32'42.7"W
+
+Comandos:
+  rota CANTEIRO > PEDREIRA
+  rota NOME DA ROTA: CANTEIRO > PEDREIRA > AREIAL
+  media NOME DA ROTA   (acrescente "memoria" no fim para anexar à prancha)
+  buscar TEXTO         (acha pedreiras, canteiros, cidades já cadastrados)
+  listar · enquadrar · apagar NOME · ajuda
+
+Em UTM, se souber a zona escreva 22S ou 23S. Latitude e longitude no Tocantins são negativas.`;
+
+async function executarLinha(linha){
+  const l = linha.trim();
+  if (!l) return null;
+  const cmd = l.match(/^(rota|media|média|buscar|listar|enquadrar|apagar|remover|ajuda)\b\s*(.*)$/i);
+  if (cmd){
+    const c = norm(cmd[1]), resto = cmd[2].trim();
+    if (c === "ajuda") return {tipo:"ia", texto:AJUDA_TEXTO};
+    if (c === "listar"){
+      const r = ferramentas.listar_levantamento();
+      const linhas = [
+        ...r.pontos.map(p => `📍 ${p.nome} (${p.lat}, ${p.lng})`),
+        ...r.rotas.map(p => `🛣️ ${p.nome}: ${p.extensao_km} km · média ${p.media_km} km` + (p.chao_km && p.chao_km !== "0,00" ? ` · chão ${p.chao_km} km` : "")),
+      ];
+      return {tipo:"acao", texto:linhas.length ? linhas.join("\n") : "Nada desenhado ainda."};
+    }
+    if (c === "enquadrar"){ ferramentas.enquadrar_mapa(resto ? {nome:resto} : {}); return {tipo:"acao", texto:"🎯 mapa enquadrado"}; }
+    if (c === "apagar" || c === "remover"){
+      if (!resto) throw new Error("diga o nome: apagar NOME");
+      return {tipo:"acao", texto:"🗑️ removido: " + ferramentas.remover_item({nome:resto}).removido};
+    }
+    if (c === "buscar"){
+      const r = ferramentas.buscar_ponto({texto:resto});
+      return {tipo:"acao", texto: r.total
+        ? r.pontos.map(p => `🔎 ${p.nome} (${p.lat}, ${p.lng})`).join("\n")
+        : `Nenhum ponto com “${resto}”.`};
+    }
+    if (c === "media"){
+      const anexar = /\bmemoria\s*$/i.test(norm(resto));
+      const nome = anexar ? resto.replace(/\s*mem[oó]ria\s*$/i, "") : resto;
+      const r = ferramentas.media_rota({nome, anexar_memoria:anexar});
+      return {tipo:"acao", texto:"🧮 " + r.linhas.join("\n") + (anexar ? "\n(anexado à memória de cálculo da prancha)" : "")};
+    }
+    if (c === "rota"){
+      let nome = "", lista = resto;
+      const dp = resto.indexOf(":");
+      if (dp > 0 && !/\d\s*:\s*\d/.test(resto)){ nome = resto.slice(0, dp).trim(); lista = resto.slice(dp + 1); }
+      const itens = lista.split(/\s*(?:->|→|>|;)\s*/).map(s => s.trim()).filter(Boolean);
+      if (itens.length < 2) throw new Error("use: rota A > B (ou rota NOME: A > B > C)");
+      const pontos = itens.map(it => {
+        const ac = acharCoordenada(it);
+        return ac && nomeAntesDaCoordenada(it, ac.ini) === "" ? ac.coord : it;
+      });
+      if (!nome) nome = itens.length === 2 ? `${itens[0]} - ${itens[1]}` : `Rota ${Object.keys(camadasDesenho).length + 1}`;
+      const r = await ferramentas.tracar_rota({nome, pontos});
+      return {tipo:"acao", texto:`🛣️ ${r.nome}: ${r.extensao_km} km · média ${r.media_km} km\n` +
+        `pavimentado ${r.pavimentado_km} km · chão ${r.estrada_de_chao_km} km`};
+    }
+  }
+  // senão: linha de ponto "NOME coordenada"
+  const ac = acharCoordenada(l);
+  if (!ac) throw new Error(`não entendi “${l.slice(0, 60)}”. Digite “ajuda” para ver os formatos.`);
+  const nome = nomeAntesDaCoordenada(l, ac.ini) || "";
+  const r = ferramentas.plotar_pontos({pontos:[{nome, ...ac.coord, ...iconeDoNome(nome), texto_original:l}]});
+  if (r.nao_plotados.length) throw new Error(`${nome || "ponto"}: ${r.nao_plotados[0].erro.replace(" — confirme com a pessoa", "")} — corrija e envie de novo`);
+  const p = r.plotados[0];
+  return {tipo:"acao", texto:`📍 ${p.nome} (${p.lat}, ${p.lng}) · ${p.utm}`};
+}
+async function turnoLocal(texto){
+  for (const linha of texto.split(/\r?\n/)){
+    try {
+      const r = await executarLinha(linha);
+      if (r) adicionar(r.tipo, r.texto);
+    } catch (e){ adicionar("erro", "⚠️ " + e.message); }
+  }
+}
+
 /* ================= Conversa ================= */
 const CHAVE_CODIGO = "rta_chat_codigo";
 let historico = [];     // formato da API: {role, content}
@@ -259,6 +391,7 @@ let ocupado = false;
 
 const css = document.createElement("style");
 css.textContent = `
+.chat-m.dica{white-space:pre-wrap; font-family:Consolas,monospace;}
 #chat-btn{position:fixed; right:16px; bottom:34px; z-index:1500; border:none; border-radius:28px;
   background:#1E3A72; color:#fff; font:600 14px 'Segoe UI',system-ui,sans-serif; padding:12px 18px;
   cursor:pointer; box-shadow:0 3px 12px rgba(0,0,0,.35);}
@@ -286,16 +419,16 @@ css.textContent = `
 document.head.appendChild(css);
 
 const btn = document.createElement("button");
-btn.id = "chat-btn"; btn.textContent = "💬 Assistente";
-btn.title = "Conversar para montar o mapa (pontos, rotas, média)";
+btn.id = "chat-btn"; btn.textContent = "⌨️ Digitar pontos";
+btn.title = "Digitar ou colar coordenadas e comandos para montar o mapa (pontos, rotas, média)";
 const painel = document.createElement("div");
 painel.id = "chat-painel";
 painel.innerHTML = `
-  <div id="chat-topo"><span>💬 Assistente do mapa</span>
+  <div id="chat-topo"><span>⌨️ Montar o mapa por texto</span>
     <button id="chat-novo" title="Começar uma conversa nova">🗑️ Nova</button>
     <button id="chat-fechar" title="Fechar">✖</button></div>
   <div id="chat-msgs"></div>
-  <form id="chat-form"><textarea id="chat-entrada" rows="2" placeholder="Ex.: marca o canteiro em -12,0357 / -48,5452 e a pedreira em 789012 E / 8667000 N"></textarea>
+  <form id="chat-form"><textarea id="chat-entrada" rows="2" placeholder="CANTEIRO  -12,0357 -48,5452&#10;rota CANTEIRO > PEDREIRA   (ou: ajuda)"></textarea>
     <button id="chat-enviar" type="submit">Enviar</button></form>`;
 document.body.appendChild(btn);
 document.body.appendChild(painel);
@@ -316,9 +449,9 @@ function adicionar(classe, texto){
 function recomecar(){
   historico = [];
   msgs.innerHTML = "";
-  adicionar("dica", "Diga os pontos e eu monto o mapa. Aceito graus decimais, graus/min/seg e UTM. " +
-    "Posso traçar rotas pela estrada entre pontos (inclusive canteiros, pedreiras e cidades já cadastrados) " +
-    "e dar a média de cada rota. Se uma coordenada parecer errada, eu pergunto antes de plotar.");
+  adicionar("dica", USAR_IA
+    ? "Diga os pontos e eu monto o mapa. Aceito graus decimais, graus/min/seg e UTM."
+    : AJUDA_TEXTO);
 }
 function abrir(){ painel.classList.add("aberto"); btn.style.display = "none"; entrada.focus(); }
 function fechar(){ painel.classList.remove("aberto"); btn.style.display = ""; }
@@ -403,7 +536,7 @@ painel.querySelector("#chat-form").addEventListener("submit", async ev => {
   ocupado = true; enviar.disabled = true;
   adicionar("eu", texto);
   const pensando = adicionar("dica", "…");
-  try { await turno(texto); }
+  try { await (USAR_IA ? turno(texto) : turnoLocal(texto)); }
   finally {
     pensando.remove();
     ocupado = false; enviar.disabled = false; entrada.focus();

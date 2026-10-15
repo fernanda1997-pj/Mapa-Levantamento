@@ -52,10 +52,9 @@ Usuária: Fernanda (RTA Engenheiros Consultores). Responder sempre em português
 - `C:\1. Projetos\RTA\web` = OUTRO projeto (mapa Folium das rodovias, repo RTS-MSI_RODOVIAS, site rta-msi-rodovias.vercel.app). A usuária NÃO quis o geoportal dentro dele
 - Este projeto nasceu da pasta `web - Mapas`; manuais (.docx/.pdf) ficam na pasta mas fora do git (.gitignore)
 
-## Assistente de conversa (💬, criado em 2026-10-15)
+## Montar o mapa por texto (⌨️ Digitar pontos, criado em 2026-10-15)
 
-- `chat-levantamento.js` (cliente: painel + ferramentas que mexem no mapa) e `api/chat.js` (função Vercel que chama a API da Anthropic com as ferramentas declaradas no servidor)
-- Ferramentas: plotar_pontos, tracar_rota (OSRM), buscar_ponto, listar_levantamento, media_rota, remover_item, enquadrar_mapa. O modelo só PEDE; quem executa é o navegador
-- Coordenada suspeita (fora do Tocantins, sinal faltando, lat/lng ou este/norte trocados, UTM sem zona que serve às duas) é RECUSADA pela ferramenta e o modelo pergunta — nunca corrige sozinho
-- Variáveis no Vercel: `ANTHROPIC_API_KEY` (obrigatória), `CHAT_CODIGO` (código de acesso da equipe; sem ele o site aberto gasta a chave), `CHAT_MODEL` (padrão claude-haiku-5-5)
-- Teste local sem chave: servidor python que simula /api/chat (o `python -m http.server` não roda /api)
+- `chat-levantamento.js`: painel onde a pessoa digita/cola um ponto por linha (`NOME  -12,03 -48,54`, UTM com zona opcional `22S`, ou graus/min/seg) e comandos `rota A > B`, `rota NOME: A > B > C`, `media NOME [memoria]`, `buscar`, `listar`, `enquadrar`, `apagar`, `ajuda`. Sem IA, sem custo, nada sai do navegador (só o OSRM/Valhalla das rotas, como o resto do app)
+- Coordenada suspeita (fora do Tocantins, sinal faltando, lat/lng ou este/norte trocados, UTM que serve às duas zonas) é RECUSADA e a linha volta com o erro — nunca corrige sozinho. Ponto milhar: "789.012" só vira UTM se der >= 100 mil, senão "-12.035" é grau decimal
+- Modo IA dormente: `USAR_IA = true` no topo do bloco usa `api/chat.js` (função Vercel → API da Anthropic; exige `ANTHROPIC_API_KEY` paga, `CHAT_CODIGO` e opcional `CHAT_MODEL` no Vercel). Está desligado de propósito: a usuária não quer pagar
+- Teste local: o `python -m http.server` não roda /api; para o modo texto não precisa
