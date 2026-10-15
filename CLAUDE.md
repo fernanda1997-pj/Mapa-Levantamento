@@ -51,3 +51,11 @@ Usuária: Fernanda (RTA Engenheiros Consultores). Responder sempre em português
 
 - `C:\1. Projetos\RTA\web` = OUTRO projeto (mapa Folium das rodovias, repo RTS-MSI_RODOVIAS, site rta-msi-rodovias.vercel.app). A usuária NÃO quis o geoportal dentro dele
 - Este projeto nasceu da pasta `web - Mapas`; manuais (.docx/.pdf) ficam na pasta mas fora do git (.gitignore)
+
+## Assistente de conversa (💬, criado em 2026-10-15)
+
+- `chat-levantamento.js` (cliente: painel + ferramentas que mexem no mapa) e `api/chat.js` (função Vercel que chama a API da Anthropic com as ferramentas declaradas no servidor)
+- Ferramentas: plotar_pontos, tracar_rota (OSRM), buscar_ponto, listar_levantamento, media_rota, remover_item, enquadrar_mapa. O modelo só PEDE; quem executa é o navegador
+- Coordenada suspeita (fora do Tocantins, sinal faltando, lat/lng ou este/norte trocados, UTM sem zona que serve às duas) é RECUSADA pela ferramenta e o modelo pergunta — nunca corrige sozinho
+- Variáveis no Vercel: `ANTHROPIC_API_KEY` (obrigatória), `CHAT_CODIGO` (código de acesso da equipe; sem ele o site aberto gasta a chave), `CHAT_MODEL` (padrão claude-haiku-5-5)
+- Teste local sem chave: servidor python que simula /api/chat (o `python -m http.server` não roda /api)
