@@ -202,17 +202,24 @@ module.exports = async (req, res) => {
       r = await chamar(false);
       j = await r.json().catch(() => ({}));
     }
+    if (r.status === 500 || r.status === 503) { // modelo sobrecarregado: uma nova tentativa
+      await new Promise(ok => setTimeout(ok, 1500));
+      r = await chamar(true);
+      j = await r.json().catch(() => ({}));
+    }
     if (!r.ok) {
       console.error("gemini", r.status, JSON.stringify(j).slice(0, 500));
       if (r.status === 429) {
         res.status(429).json({ erro: "Acabou a cota gratuita do assistente por agora (limite por minuto ou por dia). Tente em alguns minutos." });
-      } else if (r.status === 400 || r.status === 403) {
+      } else if (r.status === 400 || r.status === 401 || r.status === 403) {
         const m = (j.error && j.error.message) || "";
         res.status(502).json({ erro: "O Google recusou o pedido: " + m.slice(0, 200) });
       } else if (r.status === 404) {
         res.status(502).json({ erro: `Modelo “${MODELO}” não existe; ajuste CHAT_MODEL no Vercel.` });
       } else {
-        res.status(502).json({ erro: "O assistente não respondeu agora. Tente de novo em instantes." });
+        // mostra o motivo real do Google (a mensagem dele não contém a chave)
+        const m = (j.error && j.error.message) || "";
+        res.status(502).json({ erro: `O assistente não respondeu (Google HTTP ${r.status}${m ? ": " + m.slice(0, 220) : ""}).` });
       }
       return;
     }
