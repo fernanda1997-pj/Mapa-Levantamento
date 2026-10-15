@@ -1,20 +1,19 @@
-/* Assistente do Geoportal — função serverless do Vercel.
-   O navegador manda a conversa; aqui ela é repassada à API da Anthropic junto com as
-   ferramentas do mapa. As ferramentas NÃO rodam aqui: o modelo só pede (tool_use) e o
-   navegador executa no mapa, devolvendo o resultado na rodada seguinte.
+/* Assistente do Geoportal — função serverless do Vercel (Google Gemini, plano gratuito).
+   O navegador manda a conversa; aqui ela é repassada ao Gemini junto com as ferramentas
+   do mapa. As ferramentas NÃO rodam aqui: o modelo só pede (functionCall) e o navegador
+   executa no mapa, devolvendo o resultado (functionResponse) na rodada seguinte.
 
    Variáveis de ambiente (Vercel > Settings > Environment Variables):
-     ANTHROPIC_API_KEY  (obrigatória) chave da API
-     CHAT_CODIGO        (recomendada) código de acesso da equipe; sem ele qualquer um
-                        que abra o site gasta a sua chave
-     CHAT_MODEL         (opcional) padrão claude-haiku-5-5 */
+     GEMINI_API_KEY  (obrigatória) chave grátis de https://aistudio.google.com/apikey
+     CHAT_CODIGO     (recomendada) código de acesso da equipe, para ninguém de fora gastar a cota
+     CHAT_MODEL      (opcional) padrão gemini-flash-latest (alias do Flash mais recente) */
 
-const MODELO = process.env.CHAT_MODEL || "claude-haiku-5-5";
+const MODELO = process.env.CHAT_MODEL || "gemini-flash-latest";
 const MAX_MENSAGENS = 60;
 const MAX_BYTES = 80 * 1024;
 
 const SISTEMA = `Você é o assistente do Geoportal RTA-MSI (levantamento de trechos rodoviários no Tocantins). \
-A pessoa conversa com você e o mapa é montado por suas ferramentas. Responda sempre em português do Brasil, curto e direto.
+A pessoa conversa com você e o mapa é montado pelas suas ferramentas. Responda sempre em português do Brasil, curto e direto.
 
 REGRAS DE COORDENADA (o mapa vai para relatório e orçamento; ponto no lugar errado custa caro):
 - Nunca invente nem "arredonde" coordenada. Passe os números exatamente como a pessoa escreveu (vírgula decimal vira ponto).
@@ -28,95 +27,125 @@ explique o que parece errado e pergunte.
 
 COMO TRABALHAR:
 - Plote vários pontos de uma vez (plotar_pontos). Dê nome curto e claro; se a pessoa não deu nome, use "Ponto N".
-- Para rota: use tracar_rota com os nomes de pontos que já existem (desenhados ou fixos, como canteiro/pedreira/cidade) ou coordenadas. \
+- Para rota: tracar_rota com os nomes de pontos que já existem (desenhados ou fixos, como canteiro/pedreira/cidade) ou coordenadas. \
 A rota segue a estrada pelo OSRM. Se um nome casar com vários pontos, pergunte qual.
 - "Média" da rota = extensão ÷ 2 (DMT ao meio). Use media_rota; não calcule de cabeça.
+- Distância entre dois pontos sem desenhar rota: distancia_estrada.
 - Antes de afirmar distância, KM ou o que existe no mapa, consulte as ferramentas (listar_levantamento, buscar_ponto). Não chute.
 - Depois de montar algo, diga em uma ou duas linhas o que foi feito (nome, coordenada plotada, extensão). Sem enrolação.
 - Você NÃO gera a prancha PNG nem baixa KML: se pedirem, diga qual botão usar (📐 Prancha / ⬇️ Baixar levantamento).
 - Se não souber ou a ferramenta falhar, diga isso. Não invente resultado.`;
 
-const FERRAMENTAS = [
-  {
-    name: "plotar_pontos",
-    description: "Cria um ou mais pontos no levantamento a partir de coordenadas. Cada ponto usa lat/lng (graus decimais) OU este/norte (UTM).",
-    input_schema: {
-      type: "object",
-      properties: {
-        pontos: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              nome: { type: "string" },
-              lat: { type: "number", description: "graus decimais, negativo no Tocantins" },
-              lng: { type: "number", description: "graus decimais, negativo no Tocantins" },
-              este: { type: "number", description: "UTM leste (m)" },
-              norte: { type: "number", description: "UTM norte (m)" },
-              zona: { type: "string", enum: ["22", "23"], description: "zona UTM sul, só se informada" },
-              icone: { type: "string", description: "emoji opcional (ex.: ⛺ canteiro, 🪨 pedreira, 🚜 areial, 🚧 obra)" },
-              cor: { type: "string", description: "cor #RRGGBB opcional" },
-              texto_original: { type: "string", description: "como a pessoa escreveu a coordenada" },
+const PONTO_REF = {
+  type: "OBJECT",
+  description: "Um ponto: informe só o nome de um ponto já existente (desenhado ou fixo) OU lat e lng.",
+  properties: {
+    nome: { type: "STRING", description: "nome de ponto existente" },
+    lat: { type: "NUMBER" },
+    lng: { type: "NUMBER" },
+  },
+};
+
+const FERRAMENTAS = [{
+  functionDeclarations: [
+    {
+      name: "plotar_pontos",
+      description: "Cria um ou mais pontos no levantamento a partir de coordenadas. Cada ponto usa lat/lng (graus decimais) OU este/norte (UTM).",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          pontos: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                nome: { type: "STRING" },
+                lat: { type: "NUMBER", description: "graus decimais, negativo no Tocantins" },
+                lng: { type: "NUMBER", description: "graus decimais, negativo no Tocantins" },
+                este: { type: "NUMBER", description: "UTM leste (m)" },
+                norte: { type: "NUMBER", description: "UTM norte (m)" },
+                zona: { type: "STRING", description: "22 ou 23, só se a pessoa informou" },
+                icone: { type: "STRING", description: "emoji opcional (⛺ canteiro, 🪨 pedreira, 🚜 areial, 🚧 obra)" },
+                cor: { type: "STRING", description: "cor #RRGGBB opcional" },
+                texto_original: { type: "STRING", description: "como a pessoa escreveu a coordenada" },
+              },
+              required: ["nome", "texto_original"],
             },
-            required: ["nome", "texto_original"],
           },
         },
+        required: ["pontos"],
       },
-      required: ["pontos"],
     },
-  },
-  {
-    name: "tracar_rota",
-    description: "Traça uma rota pela estrada (OSRM) passando pelos pontos, na ordem. Cada ponto é o NOME de um ponto existente (desenhado ou fixo) ou um objeto com lat/lng. Calcula extensão e analisa asfalto x chão.",
-    input_schema: {
-      type: "object",
-      properties: {
-        nome: { type: "string" },
-        pontos: {
-          type: "array",
-          minItems: 2,
-          items: {
-            anyOf: [
-              { type: "string", description: "nome de ponto existente" },
-              { type: "object", properties: { lat: { type: "number" }, lng: { type: "number" } }, required: ["lat", "lng"] },
-            ],
-          },
+    {
+      name: "tracar_rota",
+      description: "Traça uma rota pela estrada (OSRM) passando pelos pontos, na ordem. Calcula extensão e analisa asfalto x chão.",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          nome: { type: "STRING" },
+          pontos: { type: "ARRAY", items: PONTO_REF, description: "mínimo 2 pontos, na ordem do percurso" },
+          cor: { type: "STRING", description: "cor #RRGGBB opcional" },
         },
-        cor: { type: "string", description: "cor #RRGGBB opcional" },
+        required: ["nome", "pontos"],
       },
-      required: ["nome", "pontos"],
     },
-  },
-  {
-    name: "buscar_ponto",
-    description: "Procura pontos pelo nome entre os desenhados e os fixos (pedreiras, canteiros, cimento, cidades...). Devolve nome, categoria e coordenada.",
-    input_schema: { type: "object", properties: { texto: { type: "string" } }, required: ["texto"] },
-  },
-  {
-    name: "listar_levantamento",
-    description: "Lista tudo que já foi desenhado: pontos (com coordenada) e rotas (extensão, média, pavimento).",
-    input_schema: { type: "object", properties: {} },
-  },
-  {
-    name: "media_rota",
-    description: "Devolve a linha da memória de cálculo da rota (extensão ÷ 2) no formato padrão. Opcionalmente anexa à memória de cálculo da prancha.",
-    input_schema: {
-      type: "object",
-      properties: { nome: { type: "string" }, anexar_memoria: { type: "boolean" } },
-      required: ["nome"],
+    {
+      name: "distancia_estrada",
+      description: "Distância pela estrada entre dois pontos, sem desenhar nada no mapa.",
+      parameters: {
+        type: "OBJECT",
+        properties: { de: PONTO_REF, ate: PONTO_REF },
+        required: ["de", "ate"],
+      },
     },
-  },
-  {
-    name: "remover_item",
-    description: "Exclui um ponto ou rota desenhado pelo nome exato. Só use se a pessoa pediu para apagar.",
-    input_schema: { type: "object", properties: { nome: { type: "string" } }, required: ["nome"] },
-  },
-  {
-    name: "enquadrar_mapa",
-    description: "Ajusta o zoom do mapa para mostrar tudo que foi desenhado, ou um item específico se nome for informado.",
-    input_schema: { type: "object", properties: { nome: { type: "string" } } },
-  },
-];
+    {
+      name: "buscar_ponto",
+      description: "Procura pontos pelo nome entre os desenhados e os fixos (pedreiras, canteiros, cimento, cidades...). Devolve nome, categoria e coordenada.",
+      parameters: { type: "OBJECT", properties: { texto: { type: "STRING" } }, required: ["texto"] },
+    },
+    {
+      name: "listar_levantamento",
+      description: "Lista tudo que já foi desenhado: pontos (com coordenada) e rotas (extensão, média, pavimento).",
+    },
+    {
+      name: "media_rota",
+      description: "Devolve a linha da memória de cálculo da rota (extensão ÷ 2) no formato padrão. Opcionalmente anexa à memória de cálculo da prancha.",
+      parameters: {
+        type: "OBJECT",
+        properties: { nome: { type: "STRING" }, anexar_memoria: { type: "BOOLEAN" } },
+        required: ["nome"],
+      },
+    },
+    {
+      name: "renomear_item",
+      description: "Renomeia um ponto ou rota desenhado.",
+      parameters: {
+        type: "OBJECT",
+        properties: { nome: { type: "STRING", description: "nome atual" }, novo_nome: { type: "STRING" } },
+        required: ["nome", "novo_nome"],
+      },
+    },
+    {
+      name: "alterar_estilo",
+      description: "Troca a cor e/ou o ícone (emoji, só para pontos) de um item desenhado.",
+      parameters: {
+        type: "OBJECT",
+        properties: { nome: { type: "STRING" }, cor: { type: "STRING", description: "#RRGGBB" }, icone: { type: "STRING", description: "emoji" } },
+        required: ["nome"],
+      },
+    },
+    {
+      name: "remover_item",
+      description: "Exclui um ponto ou rota desenhado pelo nome exato. Só use se a pessoa pediu para apagar.",
+      parameters: { type: "OBJECT", properties: { nome: { type: "STRING" } }, required: ["nome"] },
+    },
+    {
+      name: "enquadrar_mapa",
+      description: "Ajusta o zoom para mostrar tudo que foi desenhado, ou um item específico se nome for informado.",
+      parameters: { type: "OBJECT", properties: { nome: { type: "STRING" } } },
+    },
+  ],
+}];
 
 function lerCorpo(req) {
   return new Promise((resolve, reject) => {
@@ -135,8 +164,8 @@ function lerCorpo(req) {
 module.exports = async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   if (req.method !== "POST") { res.status(405).json({ erro: "Use POST." }); return; }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    res.status(500).json({ erro: "O assistente ainda não foi configurado (falta ANTHROPIC_API_KEY no Vercel)." });
+  if (!process.env.GEMINI_API_KEY) {
+    res.status(500).json({ erro: "O assistente ainda não foi configurado (falta GEMINI_API_KEY no Vercel)." });
     return;
   }
   const codigo = process.env.CHAT_CODIGO;
@@ -147,35 +176,47 @@ module.exports = async (req, res) => {
   let corpo;
   try { corpo = await lerCorpo(req); }
   catch { res.status(400).json({ erro: "Requisição inválida ou grande demais." }); return; }
-  const mensagens = corpo && corpo.messages;
-  if (!Array.isArray(mensagens) || !mensagens.length || mensagens.length > MAX_MENSAGENS ||
-      JSON.stringify(mensagens).length > MAX_BYTES) {
+  const contents = corpo && corpo.contents;
+  if (!Array.isArray(contents) || !contents.length || contents.length > MAX_MENSAGENS ||
+      JSON.stringify(contents).length > MAX_BYTES) {
     res.status(400).json({ erro: "Conversa inválida ou longa demais — comece uma nova." });
     return;
   }
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: MODELO,
-        max_tokens: 1500,
-        system: SISTEMA,
-        tools: FERRAMENTAS,
-        messages: mensagens,
-      }),
-    });
-    const j = await r.json();
+    const r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(MODELO)}:generateContent`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SISTEMA }] },
+          contents,
+          tools: FERRAMENTAS,
+          generationConfig: { temperature: 0.2, maxOutputTokens: 1500 },
+        }),
+      });
+    const j = await r.json().catch(() => ({}));
     if (!r.ok) {
-      console.error("anthropic", r.status, JSON.stringify(j).slice(0, 400));
-      res.status(502).json({ erro: "O assistente não respondeu agora. Tente de novo em instantes." });
+      console.error("gemini", r.status, JSON.stringify(j).slice(0, 500));
+      if (r.status === 429) {
+        res.status(429).json({ erro: "Acabou a cota gratuita do assistente por agora (limite por minuto ou por dia). Tente em alguns minutos." });
+      } else if (r.status === 400 || r.status === 403) {
+        const m = (j.error && j.error.message) || "";
+        res.status(502).json({ erro: "O Google recusou o pedido: " + m.slice(0, 200) });
+      } else if (r.status === 404) {
+        res.status(502).json({ erro: `Modelo “${MODELO}” não existe; ajuste CHAT_MODEL no Vercel.` });
+      } else {
+        res.status(502).json({ erro: "O assistente não respondeu agora. Tente de novo em instantes." });
+      }
       return;
     }
-    res.status(200).json({ content: j.content, stop_reason: j.stop_reason });
+    const cand = j.candidates && j.candidates[0];
+    if (!cand || !cand.content || !Array.isArray(cand.content.parts)) {
+      const motivo = (j.promptFeedback && j.promptFeedback.blockReason) || (cand && cand.finishReason) || "sem resposta";
+      res.status(502).json({ erro: "O assistente não gerou resposta (" + motivo + "). Reformule o pedido." });
+      return;
+    }
+    // devolve as partes exatamente como vieram (inclui thoughtSignature, que o Gemini exige na volta)
+    res.status(200).json({ parts: cand.content.parts, finishReason: cand.finishReason });
   } catch (e) {
     console.error("chat", e);
     res.status(502).json({ erro: "Falha ao falar com o assistente." });

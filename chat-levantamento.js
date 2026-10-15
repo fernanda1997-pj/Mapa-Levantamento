@@ -72,6 +72,7 @@ function distintos(lista){
   return out;
 }
 function resolverReferencia(ref){
+  if (ref && typeof ref === "object" && ref.lat == null && ref.este == null && ref.nome) ref = String(ref.nome);
   if (typeof ref === "string"){
     const achados = distintos(buscarPontos(ref));
     if (!achados.length) throw new Error(`nenhum ponto chamado “${ref}” — use buscar_ponto ou passe coordenadas`);
@@ -160,6 +161,41 @@ const ferramentas = {
     };
   },
 
+  async distancia_estrada(entrada){
+    const a = resolverReferencia(entrada.de), b = resolverReferencia(entrada.ate);
+    const resp = await fetch(`https://router.project-osrm.org/route/v1/driving/${a.lng.toFixed(6)},${a.lat.toFixed(6)};${b.lng.toFixed(6)},${b.lat.toFixed(6)}?overview=false`);
+    const j = await resp.json();
+    if (j.code !== "Ok" || !j.routes || !j.routes.length) throw new Error("o OSRM não achou caminho pela estrada entre esses pontos");
+    const m = j.routes[0].distance;
+    return {de:a.nome || "ponto A", ate:b.nome || "ponto B", km:kmTxt(m), media_km:kmTxt(m / 2)};
+  },
+
+  renomear_item(entrada){
+    const l = acharDesenho(entrada.nome, false);
+    const novo = String(entrada.novo_nome || "").trim();
+    if (!novo) throw new Error("falta o novo nome");
+    l._nomeRTA = novo;
+    if (l instanceof L.Marker) aplicarRotulo(l, novo, l._iconeRTA ? [13, -18] : [10, 0]);
+    salvarDesenhos();
+    return {antes:entrada.nome, depois:novo};
+  },
+
+  alterar_estilo(entrada){
+    const l = acharDesenho(entrada.nome, false);
+    const cor = corValida(entrada.cor);
+    if (entrada.cor && !cor) throw new Error("cor inválida — use #RRGGBB");
+    if (cor) l._corRTA = cor;
+    if (l instanceof L.Marker){
+      if (entrada.icone) l._iconeRTA = String(entrada.icone).slice(0, 4);
+      l.setIcon(iconeDesenho(l._corRTA, l._iconeRTA));
+      aplicarRotulo(l, l._nomeRTA, l._iconeRTA ? [13, -18] : [10, 0]);
+    } else if (cor && l.setStyle){
+      l.setStyle({color:cor});
+    }
+    salvarDesenhos();
+    return {ok:true, nome:l._nomeRTA, cor:l._corRTA, icone:l._iconeRTA || null};
+  },
+
   buscar_ponto(entrada){
     const achados = distintos(buscarPontos(entrada.texto)).slice(0, 12);
     return {total:achados.length, pontos:achados.map(p => ({
@@ -244,6 +280,9 @@ function resumoAcao(nome, entrada, resultado){
     }
     case "tracar_rota": return `🛣️ ${resultado.nome}: ${resultado.extensao_km} km · média ${resultado.media_km} km`;
     case "media_rota": return "🧮 " + resultado.linhas.join("\n");
+    case "distancia_estrada": return `📏 ${resultado.de} → ${resultado.ate}: ${resultado.km} km pela estrada`;
+    case "renomear_item": return `✏️ ${resultado.antes} → ${resultado.depois}`;
+    case "alterar_estilo": return `🎨 ${resultado.nome}: estilo alterado`;
     case "remover_item": return `🗑️ removido: ${resultado.removido}`;
     case "buscar_ponto": return `🔎 ${resultado.total} ponto(s) encontrado(s)`;
     case "listar_levantamento": return `📋 ${resultado.pontos.length} ponto(s), ${resultado.rotas.length} rota(s)`;
@@ -254,7 +293,6 @@ function resumoAcao(nome, entrada, resultado){
 
 /* ================= Modo texto (sem IA, sem custo) =================
    Lê linhas digitadas/coladas e chama as mesmas ferramentas. Nada sai do navegador. */
-const USAR_IA = false; // true = conversa livre via /api/chat (precisa de chave paga no Vercel)
 
 /* um número com possível separador de milhar brasileiro: 789.012,5 -> 789012.5 */
 function numeroBR(t){
@@ -386,7 +424,8 @@ async function turnoLocal(texto){
 
 /* ================= Conversa ================= */
 const CHAVE_CODIGO = "rta_chat_codigo";
-let historico = [];     // formato da API: {role, content}
+let historico = [];     // formato Gemini: {role:"user"|"model", parts:[...]}
+let modoIA = carregar("rta_chat_modo", "ia") !== "texto";
 let ocupado = false;
 
 const css = document.createElement("style");
@@ -419,12 +458,13 @@ css.textContent = `
 document.head.appendChild(css);
 
 const btn = document.createElement("button");
-btn.id = "chat-btn"; btn.textContent = "⌨️ Digitar pontos";
+btn.id = "chat-btn"; btn.textContent = "💬 Montar por conversa";
 btn.title = "Digitar ou colar coordenadas e comandos para montar o mapa (pontos, rotas, média)";
 const painel = document.createElement("div");
 painel.id = "chat-painel";
 painel.innerHTML = `
-  <div id="chat-topo"><span>⌨️ Montar o mapa por texto</span>
+  <div id="chat-topo"><span>💬 Montar o mapa</span>
+    <button id="chat-modo" title="Alternar entre conversa livre (IA) e comandos de texto"></button>
     <button id="chat-novo" title="Começar uma conversa nova">🗑️ Nova</button>
     <button id="chat-fechar" title="Fechar">✖</button></div>
   <div id="chat-msgs"></div>
@@ -449,8 +489,11 @@ function adicionar(classe, texto){
 function recomecar(){
   historico = [];
   msgs.innerHTML = "";
-  adicionar("dica", USAR_IA
-    ? "Diga os pontos e eu monto o mapa. Aceito graus decimais, graus/min/seg e UTM."
+  painel.querySelector("#chat-modo").textContent = modoIA ? "🤖 IA" : "⌨️ Texto";
+  adicionar("dica", modoIA
+    ? "Converse normalmente: diga os pontos (graus decimais, graus/min/seg ou UTM) e peça rotas, médias, nomes, cores...\n" +
+      "Ex.: marca o canteiro em -12,0357 / -48,5452 e traça a rota até a pedreira de Porto Nacional.\n\n" +
+      "Se a IA falhar, uso o modo texto (digite “ajuda” no ⌨️ Texto)."
     : AJUDA_TEXTO);
 }
 function abrir(){ painel.classList.add("aberto"); btn.style.display = "none"; entrada.focus(); }
@@ -458,6 +501,12 @@ function fechar(){ painel.classList.remove("aberto"); btn.style.display = ""; }
 btn.addEventListener("click", abrir);
 painel.querySelector("#chat-fechar").addEventListener("click", fechar);
 painel.querySelector("#chat-novo").addEventListener("click", () => { if (!ocupado) recomecar(); });
+painel.querySelector("#chat-modo").addEventListener("click", () => {
+  if (ocupado) return;
+  modoIA = !modoIA;
+  salvar("rta_chat_modo", modoIA ? "ia" : "texto");
+  recomecar();
+});
 entrada.addEventListener("keydown", ev => {
   if (ev.key === "Enter" && !ev.shiftKey){ ev.preventDefault(); painel.querySelector("#chat-form").requestSubmit(); }
 });
@@ -467,7 +516,7 @@ async function chamarServidor(){
   const r = await fetch("/api/chat", {
     method:"POST",
     headers:{"content-type":"application/json", ...(cod ? {"x-chat-codigo":cod} : {})},
-    body:JSON.stringify({messages:historico}),
+    body:JSON.stringify({contents:historico}),
   });
   let j = {};
   try { j = await r.json(); } catch {}
@@ -497,32 +546,41 @@ function pedirCodigo(){
 
 async function turno(texto){
   const inicio = historico.length;
-  historico.push({role:"user", content:texto});
+  historico.push({role:"user", parts:[{text:texto}]});
   for (let volta = 0; volta < 8; volta++){
     let resp;
     try { resp = await chamarServidor(); }
     catch (e){
       if (e.codigo){ await pedirCodigo(); volta--; continue; }
+      historico.length = inicio; // descarta o turno incompleto (functionCall sem resposta invalidaria a próxima chamada)
       adicionar("erro", e.message);
-      historico.length = inicio; // descarta o turno incompleto (tool_use sem resultado invalidaria a próxima chamada)
+      if (volta === 0){ // nada foi executado ainda: dá para tentar o modo texto sem duplicar nada
+        adicionar("dica", "Tentando entender como comando de texto…");
+        await turnoLocal(texto);
+      }
       return;
     }
-    historico.push({role:"assistant", content:resp.content});
-    resp.content.filter(b => b.type === "text" && b.text.trim()).forEach(b => adicionar("ia", b.text.trim()));
-    const usos = resp.content.filter(b => b.type === "tool_use");
-    if (resp.stop_reason !== "tool_use" || !usos.length) return;
-    const resultados = [];
+    historico.push({role:"model", parts:resp.parts});
+    // "thought" são pensamentos internos do modelo: não mostrar
+    resp.parts.filter(p => p.text && !p.thought && p.text.trim()).forEach(p => adicionar("ia", p.text.trim()));
+    const usos = resp.parts.filter(p => p.functionCall);
+    if (!usos.length){
+      if (!resp.parts.some(p => p.text && !p.thought && p.text.trim())) adicionar("ia", "(sem resposta — reformule)");
+      return;
+    }
+    const respostas = [];
     for (const u of usos){
+      const {name, args} = u.functionCall;
       let saida, ehErro = false;
       try {
-        const f = ferramentas[u.name];
+        const f = ferramentas[name];
         if (!f) throw new Error("ferramenta desconhecida");
-        saida = await f(u.input || {});
+        saida = await f(args || {});
       } catch (e){ saida = {erro:e.message}; ehErro = true; }
-      adicionar(ehErro ? "erro" : "acao", resumoAcao(u.name, u.input, saida));
-      resultados.push({type:"tool_result", tool_use_id:u.id, content:JSON.stringify(saida), ...(ehErro ? {is_error:true} : {})});
+      adicionar(ehErro ? "erro" : "acao", resumoAcao(name, args, saida));
+      respostas.push({functionResponse:{name, response:saida}});
     }
-    historico.push({role:"user", content:resultados});
+    historico.push({role:"user", parts:respostas});
   }
   adicionar("erro", "Parei por segurança depois de muitas etapas seguidas. Diga o que falta.");
 }
@@ -536,7 +594,7 @@ painel.querySelector("#chat-form").addEventListener("submit", async ev => {
   ocupado = true; enviar.disabled = true;
   adicionar("eu", texto);
   const pensando = adicionar("dica", "…");
-  try { await (USAR_IA ? turno(texto) : turnoLocal(texto)); }
+  try { await (modoIA ? turno(texto) : turnoLocal(texto)); }
   finally {
     pensando.remove();
     ocupado = false; enviar.disabled = false; entrada.focus();

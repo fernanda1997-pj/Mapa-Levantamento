@@ -52,9 +52,11 @@ Usuária: Fernanda (RTA Engenheiros Consultores). Responder sempre em português
 - `C:\1. Projetos\RTA\web` = OUTRO projeto (mapa Folium das rodovias, repo RTS-MSI_RODOVIAS, site rta-msi-rodovias.vercel.app). A usuária NÃO quis o geoportal dentro dele
 - Este projeto nasceu da pasta `web - Mapas`; manuais (.docx/.pdf) ficam na pasta mas fora do git (.gitignore)
 
-## Montar o mapa por texto (⌨️ Digitar pontos, criado em 2026-10-15)
+## Montar o mapa por conversa (💬, criado em 2026-10-15)
 
-- `chat-levantamento.js`: painel onde a pessoa digita/cola um ponto por linha (`NOME  -12,03 -48,54`, UTM com zona opcional `22S`, ou graus/min/seg) e comandos `rota A > B`, `rota NOME: A > B > C`, `media NOME [memoria]`, `buscar`, `listar`, `enquadrar`, `apagar`, `ajuda`. Sem IA, sem custo, nada sai do navegador (só o OSRM/Valhalla das rotas, como o resto do app)
-- Coordenada suspeita (fora do Tocantins, sinal faltando, lat/lng ou este/norte trocados, UTM que serve às duas zonas) é RECUSADA e a linha volta com o erro — nunca corrige sozinho. Ponto milhar: "789.012" só vira UTM se der >= 100 mil, senão "-12.035" é grau decimal
-- Modo IA dormente: `USAR_IA = true` no topo do bloco usa `api/chat.js` (função Vercel → API da Anthropic; exige `ANTHROPIC_API_KEY` paga, `CHAT_CODIGO` e opcional `CHAT_MODEL` no Vercel). Está desligado de propósito: a usuária não quer pagar
-- Teste local: o `python -m http.server` não roda /api; para o modo texto não precisa
+- `chat-levantamento.js` = painel com dois modos (botão no topo do painel, lembrado em localStorage `rta_chat_modo`): **🤖 IA** (conversa livre via `api/chat.js` → Google Gemini, plano gratuito) e **⌨️ Texto** (sem IA, sem custo: um ponto por linha `NOME  -12,03 -48,54`, UTM com zona opcional `22S`, ou graus/min/seg; comandos `rota A > B`, `media NOME [memoria]`, `buscar`, `listar`, `enquadrar`, `apagar`, `ajuda`). Se a IA falhar na 1ª chamada (cota, chave faltando), cai sozinho no modo texto para aquela mensagem
+- Ferramentas (executam no navegador; o modelo só pede via functionCall): plotar_pontos, tracar_rota (OSRM), distancia_estrada, buscar_ponto, listar_levantamento, media_rota, renomear_item, alterar_estilo, remover_item, enquadrar_mapa. As declarações ficam em `api/chat.js`
+- Coordenada suspeita (fora do Tocantins, sinal faltando, lat/lng ou este/norte trocados, UTM que serve às duas zonas) é RECUSADA pela ferramenta e o modelo pergunta — nunca corrige sozinho. "789.012" só vira UTM se der >= 100 mil, senão "-12.035" é grau decimal
+- Variáveis no Vercel: `GEMINI_API_KEY` (grátis em aistudio.google.com/apikey), `CHAT_CODIGO` (código de acesso da equipe) e opcional `CHAT_MODEL` (padrão `gemini-flash-latest`). A API do Gemini mudou de formato recentemente e as cotas gratuitas não foram confirmadas: se der erro de modelo/cota, conferir no AI Studio
+- O Gemini devolve `thoughtSignature` nas partes: o cliente reenvia as partes do modelo exatamente como vieram (não reconstruir)
+- Teste local: `python -m http.server` não roda /api; usei um servidor python que simula /api/chat (formato `contents`/`parts`)
