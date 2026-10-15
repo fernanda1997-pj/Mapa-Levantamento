@@ -183,18 +183,25 @@ module.exports = async (req, res) => {
     return;
   }
   try {
-    const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(MODELO)}:generateContent`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: SISTEMA }] },
-          contents,
-          tools: FERRAMENTAS,
-          generationConfig: { temperature: 0.2, maxOutputTokens: 1500 },
-        }),
-      });
-    const j = await r.json().catch(() => ({}));
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(MODELO)}:generateContent`;
+    const chamar = comPensamento0 => fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": process.env.GEMINI_API_KEY },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: SISTEMA }] },
+        contents,
+        tools: FERRAMENTAS,
+        // sem "pensamento" interno: o pedido é simples (ferramenta + coordenada) e isso é o que mais atrasa
+        generationConfig: { temperature: 0.2, maxOutputTokens: 1500,
+                            ...(comPensamento0 ? { thinkingConfig: { thinkingBudget: 0 } } : {}) },
+      }),
+    });
+    let r = await chamar(true);
+    let j = await r.json().catch(() => ({}));
+    if (r.status === 400 && /think/i.test(JSON.stringify(j))) { // este modelo não aceita desligar: repete sem
+      r = await chamar(false);
+      j = await r.json().catch(() => ({}));
+    }
     if (!r.ok) {
       console.error("gemini", r.status, JSON.stringify(j).slice(0, 500));
       if (r.status === 429) {

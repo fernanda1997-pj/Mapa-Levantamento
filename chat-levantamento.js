@@ -148,15 +148,15 @@ const ferramentas = {
     registrarDesenho(linha, nome);
     salvarDesenhos();
     map.fitBounds(linha.getBounds(), {padding:[70, 70], maxZoom:15});
-    // asfalto x chão (Valhalla): espera até 25 s, depois segue em segundo plano
-    const analise = analisarPavimento(linha).catch(() => null);
-    await Promise.race([analise, new Promise(r => setTimeout(r, 25000))]);
+    // asfalto x chão (Valhalla) leva até ~25 s: roda em segundo plano e avisa no chat quando terminar,
+    // em vez de segurar a resposta
+    analisarPavimento(linha).then(p => {
+      adicionar("acao", `🛞 ${nome}: pavimentado ${kmTxt(p.pav)} km · estrada de chão ${kmTxt(p.chao)} km`);
+    }).catch(() => {});
     const total = extensaoRotaM(linha);
-    const pav = pavEfetivo(linha);
     return {
       nome, extensao_km:kmTxt(total), media_km:kmTxt(total / 2),
-      pavimentado_km: pav ? kmTxt(pav.pav) : "análise ainda em andamento",
-      estrada_de_chao_km: pav ? kmTxt(pav.chao) : "análise ainda em andamento",
+      pavimento: "análise de asfalto x chão em andamento; o resultado aparece no chat sozinho quando terminar",
       aviso: "distância pelo OSRM (estrada do OpenStreetMap), igual à do botão 🛣️ Rota pela estrada",
     };
   },
@@ -400,8 +400,7 @@ async function executarLinha(linha){
       });
       if (!nome) nome = itens.length === 2 ? `${itens[0]} - ${itens[1]}` : `Rota ${Object.keys(camadasDesenho).length + 1}`;
       const r = await ferramentas.tracar_rota({nome, pontos});
-      return {tipo:"acao", texto:`🛣️ ${r.nome}: ${r.extensao_km} km · média ${r.media_km} km\n` +
-        `pavimentado ${r.pavimentado_km} km · chão ${r.estrada_de_chao_km} km`};
+      return {tipo:"acao", texto:`🛣️ ${r.nome}: ${r.extensao_km} km · média ${r.media_km} km (asfalto x chão em análise…)`};
     }
   }
   // senão: linha de ponto "NOME coordenada"
